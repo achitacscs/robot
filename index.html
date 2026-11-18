@@ -100,6 +100,7 @@
   <label>Tono de voz <input id="tono" type="range" min="0.5" max="2" step="0.1"></label>
   <label>Velocidad de voz <input id="velocidad" type="range" min="0.6" max="1.4" step="0.05"></label>
   <div class="fila"><button id="probarVoz">Probar voz</button><button id="probarMic">Probar micrófono</button></div>
+  <div class="fila"><button id="pedirMic" style="flex:1">🎙️ Pedir permiso de micrófono</button></div>
   <label><input id="verMic" type="checkbox"> Mostrar botones 🎤 y 🦜</label>
   <label><input id="repetir" type="checkbox"> En la charla, a veces repite lo que dice la nena</label>
   <label>Voz del loro 🦜 (más a la derecha = más aguda)
@@ -493,11 +494,27 @@
   // Modo charla: después de cada respuesta vuelve a escuchar solo.
   // Se apaga tocando el mic otra vez, o solo si nadie habla 2 veces seguidas.
   let modoCharla = false, silencios = 0;
+  // Pide el permiso de micrófono de forma explícita (en la app instalada a veces el reconocimiento de voz no lo pide solo)
+  let micOk = false;
+  async function asegurarMic() {
+    if (micOk) return true;
+    try {
+      const st = await navigator.mediaDevices.getUserMedia({ audio:true });
+      st.getTracks().forEach(t => t.stop());
+      micOk = true; return true;
+    } catch (e) {
+      const txt = e.name === 'NotAllowedError'
+        ? 'El micrófono está bloqueado para el robot.\nAbrí Chrome → ⋮ → Configuración → Configuración de sitios → Micrófono, y permití achitacscs.github.io.'
+        : 'No se pudo usar el micrófono (' + e.name + ').';
+      mostrarError(txt); avisoIA(txt); anotar('⚠ permiso mic: ' + e.name);
+      return false;
+    }
+  }
   function activarCharla(si) {
     if (si && modoLoro) activarLoro(false);
     modoCharla = si; silencios = 0;
     $('mic').classList.toggle('activo', si);
-    if (si) escuchar();
+    if (si) asegurarMic().then(ok => { if (!ok) { activarCharla(false); return; } if (modoCharla) escuchar(); });
     else {
       try { reconocedor && reconocedor.abort(); } catch (e) {}
       if (estado === 'escuchando') { estado = 'libre'; ponerEmocion('normal'); }
@@ -827,6 +844,10 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   });
   $('velocidad').addEventListener('input', e => { cfg.velocidad = parseFloat(e.target.value); guardar(); });
   $('probarVoz').addEventListener('click', () => hablar(`¡Hola! Soy ${cfg.nomRobot.trim() || 'Bipo'}. ¿Querés jugar conmigo?`, 'contento'));
+  $('pedirMic').addEventListener('click', async () => {
+    micOk = false;
+    if (await asegurarMic()) { avisoIA('Micrófono permitido ✔'); hablar('¡Ahora te puedo escuchar!', 'contento'); }
+  });
   $('probarMic').addEventListener('click', () => { panel.classList.remove('abierto'); activarCharla(true); });
   $('verMic').checked = cfg.verMic;
   const aplicarMic = () => { $('mic').classList.toggle('oculto', !cfg.verMic); $('loro').classList.toggle('oculto', !cfg.verMic); };
@@ -878,7 +899,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '15';
+  const VERSION = '16';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
