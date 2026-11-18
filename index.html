@@ -74,6 +74,7 @@
     <button data-e="pensando">Pensando</button>
     <button data-e="escuchando">Escucha</button>
     <button data-e="dormido">Dormido</button>
+    <button data-e="llanto">Llanto</button>
   </div>
 
   <h4>Cerebro (IA)</h4>
@@ -169,6 +170,7 @@
     triste:     { w:0.95, h:0.85, r:0.30, enojo:0,    preoc:0.45, alegre:0, color:[90,160,255],  tiembla:0 },
     pensando:   { w:0.95, h:0.70, r:0.30, enojo:0.12, preoc:0,    alegre:0, color:CYAN,          tiembla:0 },
     escuchando: { w:1.05, h:1.10, r:0.45, enojo:0,    preoc:0,    alegre:0, color:[80,255,150],  tiembla:0 },
+    llanto:     { w:0.95, h:0.70, r:0.35, enojo:0,    preoc:0.55, alegre:0, color:[90,160,255],  tiembla:1 },
   };
   const ESPECIALES = ['risa', 'cruz', 'mareado', 'dormido'];
   const CLAVES_FORMA = ['w','h','r','enojo','preoc','alegre','tiembla'];
@@ -252,6 +254,24 @@
     ctx.quadraticCurveTo(x + s * 0.7, y + c, x, y + c + s * 0.5);
     ctx.quadraticCurveTo(x - s * 0.7, y + c, x, y + c - s); ctx.fill();
   }
+  // Lágrimas que caen desde abajo de cada ojo
+  function lagrimas(cx, abajo, base, t, lado) {
+    ctx.shadowColor = 'rgb(120,190,255)'; ctx.shadowBlur = 12;
+    ctx.fillStyle = 'rgb(120,190,255)';
+    for (let i = 0; i < 3; i++) {
+      const f = (t * 0.8 + i / 3 + (lado > 0 ? 0.17 : 0)) % 1;
+      const x = cx + lado * base * 0.18 + Math.sin(f * 6 + i) * base * 0.02;
+      const y = abajo + f * base * 1.1;
+      const sz = base * (0.075 - f * 0.02);
+      ctx.globalAlpha = 1 - f * 0.9;
+      ctx.beginPath();
+      ctx.moveTo(x, y - sz * 1.4);
+      ctx.quadraticCurveTo(x + sz, y, x, y + sz * 0.8);
+      ctx.quadraticCurveTo(x - sz, y, x, y - sz * 1.4);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+  }
   function textoFlotante(txt, x, y, s, t, color) {
     ctx.shadowBlur = 0; ctx.fillStyle = color; ctx.font = `bold ${s}px system-ui`;
     for (let i = 0; i < 3; i++) {
@@ -289,7 +309,7 @@
       mirada.ty = centro ? 0 : Math.random() * 1.4 - 0.7;
       proxMirada = ahora + 1200 + Math.random() * 2800;
     } else if (emocion === 'miedo') { mirada.tx = Math.sin(t * 2.5) * 0.6; mirada.ty = 0.3; }
-    else if (emocion === 'triste') { mirada.tx = 0; mirada.ty = 0.5; }
+    else if (emocion === 'triste' || emocion === 'llanto') { mirada.tx = 0; mirada.ty = emocion === 'llanto' ? 0.3 : 0.5; }
     else if (emocion === 'pensando') { mirada.tx = 0.6 + Math.sin(t) * 0.1; mirada.ty = -0.6; }
     else if (emocion !== 'normal') { mirada.tx = 0; mirada.ty = 0; }
     mirada.x = lerp(mirada.x, mirada.tx, 0.12); mirada.y = lerp(mirada.y, mirada.ty, 0.12);
@@ -311,7 +331,8 @@
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
     const base = Math.min(W * 0.24, H * 0.5) * escala;
     const sep = Math.min(W * 0.19, base * 1.05);
-    const ox = mirada.x * W * 0.1, oy = mirada.y * H * 0.12;
+    const ox = mirada.x * W * 0.1;
+    const oy = mirada.y * H * 0.12 + (emocion === 'llanto' ? Math.abs(Math.sin(t * 7)) * base * 0.05 : 0); // sollozo
     const tx = (Math.random() * 2 - 1) * forma.tiembla, ty = (Math.random() * 2 - 1) * forma.tiembla;
     for (const lado of [-1, 1]) {
       const cx = W / 2 + lado * sep + ox + tx, cy = H / 2 + oy + ty;
@@ -321,6 +342,7 @@
       else if (emocion === 'mareado') ojoEspiral(cx, cy, w, base, t, lado);
       else if (emocion === 'dormido') ojoDormido(cx, cy, w, base);
       else ojoBase(cx, cy, w, h, lado, forma);
+      if (emocion === 'llanto') lagrimas(cx, cy + base * forma.h * 0.35, base, t, lado);
     }
     if (emocion === 'miedo') gotaSudor(W / 2 + sep + base * 0.6, H / 2 - base * 0.55, base * 0.12, t);
     if (emocion === 'dormido') textoFlotante('z', W / 2 + sep + base * 0.5, H / 2 - base * 0.5, base * 0.25, t, 'rgba(63,240,255,0.7)');
@@ -352,8 +374,9 @@
     const dur = performance.now() - inicioToque.t;
     if (!largo && !cosquillas && recorrido < 25 && dur < 400 && estado === 'libre') {
       const ahora = performance.now();
-      toques = toques.filter(x => ahora - x < 2000); toques.push(ahora);
-      if (toques.length >= 4 || emocion === 'enojado') ponerEmocion('enojado', 3000);
+      toques = toques.filter(x => ahora - x < 3000); toques.push(ahora);
+      if (toques.length >= 7 || emocion === 'llanto') ponerEmocion('llanto', 4000);
+      else if (toques.length >= 4 || emocion === 'enojado') ponerEmocion('enojado', 3000);
       else ponerEmocion('cruz', 1100);
     }
     inicioToque = null; dedo = null;
@@ -518,7 +541,7 @@ Reglas de cuidado (muy importantes):
 - No digas que sos una persona ni que estás vivo de verdad: sos un robot de juguete, aunque podés ser su amigo de juegos.
 - Si no sabés algo, decí que no sabés; no inventes.
 
-Formato: empezá SIEMPRE con una etiqueta de emoción entre corchetes y después el texto. Etiquetas: [contento] [risa] [sorpresa] [pensando] [triste] [miedo] [enojado] [normal]. Usá [enojado] y [miedo] solo jugando, en broma.
+Formato: empezá SIEMPRE con una etiqueta de emoción entre corchetes y después el texto. Etiquetas: [contento] [risa] [sorpresa] [pensando] [triste] [llanto] [miedo] [enojado] [normal]. Usá [llanto], [enojado] y [miedo] solo jugando, en broma (por ejemplo, llorar de mentirita en un cuento).
 Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   }
 
@@ -604,7 +627,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   }
 
   const EMOCIONES_IA = { contento:'contento', feliz:'contento', risa:'risa', sorpresa:'sorpresa', pensando:'pensando',
-    triste:'triste', miedo:'miedo', enojado:'enojado', normal:'normal' };
+    triste:'triste', llanto:'llanto', miedo:'miedo', enojado:'enojado', normal:'normal' };
   function separar(respuesta) {
     const m = /^\s*\[([a-záéíóúñ]+)\]\s*/i.exec(respuesta);
     const emo = (m && EMOCIONES_IA[m[1].toLowerCase()]) || 'contento';
@@ -747,7 +770,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '11';
+  const VERSION = '12';
   $('version').textContent = 'Versión ' + VERSION;
   let hayNueva = false;
   async function buscarVersion() {
