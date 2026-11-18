@@ -22,6 +22,12 @@
   #mic { position:fixed; left:50%; bottom:12px; transform:translateX(-50%); width:64px; height:64px;
     border-radius:50%; border:2px solid #3ff0ff55; background:#3ff0ff18; color:#3ff0ffcc; font-size:28px; z-index:3; }
   #mic.oculto, #loro.oculto { display:none; }
+  #musica { position:fixed; left:50%; bottom:10px; transform:translateX(-50%); width:min(46vw, 70vh); aspect-ratio:16/9;
+    border:3px solid #3ff0ff88; border-radius:14px; overflow:hidden; background:#000; z-index:3; display:none; box-shadow:0 0 24px #3ff0ff55; }
+  #musica.visible { display:block; }
+  #musica iframe { width:100%; height:100%; border:0; }
+  #cerrarMusica { position:fixed; z-index:4; display:none; width:40px; height:40px; border-radius:50%; border:none;
+    background:#000c; color:#fff; font-size:20px; }
   #loro { position:fixed; left:12px; bottom:12px; width:56px; height:56px; border-radius:50%;
     border:2px solid #ffd34a55; background:#ffd34a18; font-size:26px; z-index:3; }
   #loro.activo { background:#ffd34a40; border-color:#ffd34a; box-shadow:0 0 18px #ffd34aaa; }
@@ -61,6 +67,8 @@
   <small>(se pone en pantalla completa)</small>
 </div>
 
+<div id="musica"><div id="ytPlayer"></div></div>
+<button id="cerrarMusica" aria-label="Parar música">✕</button>
 <button id="mic" aria-label="Hablar">🎤</button>
 <button id="loro" aria-label="Modo loro">🦜</button>
 <button id="engranaje" aria-label="Ajustes">⚙</button>
@@ -120,6 +128,12 @@
   </label>
   <div class="fila"><button id="decirTal" style="flex:1">🗣️ Decirlo tal cual</button><button id="decirIA" style="flex:1">✨ A su manera</button></div>
 
+  <h4>Música 🎵</h4>
+  <label>Canciones de YouTube (una por renglón: nombre | link). El robot las pone cuando hace falta:
+    <textarea id="canciones"></textarea>
+  </label>
+  <div class="fila"><button id="probarCancion" style="flex:1">▶ Poner la 1</button><button id="pararMusica" style="flex:1">⏹ Parar</button></div>
+
   <h4>Charla de hoy</h4>
   <div id="charla"></div>
   <div class="fila"><button id="borrar">Borrar charla</button></div>
@@ -149,6 +163,7 @@
   const cfg = {
     prov:'gemini', claves:{}, modelos:{}, nomRobot:'', nomNena:'',
     tono:1.4, velocidad:1.0, verMic:true, sens:1.6, repetir:true, loroTono:1.5, ensenanzas:'',
+    canciones:'A guardar, a guardar (canción del jardín) | https://www.youtube.com/watch?v=HCynKopZ6Z4\nA guardar (Pica-Pica) | https://www.youtube.com/watch?v=SexxNS3WSuo',
   };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem('robot_cfg') || '{}')); } catch (e) {}
   const guardar = () => { try { localStorage.setItem('robot_cfg', JSON.stringify(cfg)); } catch (e) {} };
@@ -200,7 +215,7 @@
   const mirada = { x:0, y:0, tx:0, ty:0 }; let proxMirada = 0;
   let parpadeo = -1, proxParpadeo = 0, hablandoAnim = false, dedo = null;
   // nivelVoz: 0..1, sube cuando la nena habla (los ojos vibran más fuerte)
-  let nivelVoz = 0, nenaHablando = false;
+  let nivelVoz = 0, nenaHablando = false, bailando = false;
 
   function ponerEmocion(nombre, ms = 2500) {
     if (!(nombre in BASE) && !ESPECIALES.includes(nombre)) return;
@@ -373,8 +388,9 @@
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
     const base = Math.min(W * 0.24, H * 0.5) * escala;
     const sep = Math.min(W * 0.19, base * 1.05);
-    const ox = mirada.x * W * 0.1;
-    const oy = mirada.y * H * 0.12 + (emocion === 'llanto' ? Math.abs(Math.sin(t * 7)) * base * 0.05 : 0); // sollozo
+    const ox = mirada.x * W * 0.1 + (bailando ? Math.sin(t * 4) * base * 0.12 : 0);
+    const oy = mirada.y * H * 0.12 + (emocion === 'llanto' ? Math.abs(Math.sin(t * 7)) * base * 0.05 : 0) // sollozo
+      - (bailando ? Math.abs(Math.sin(t * 8)) * base * 0.08 + base * 0.25 : 0); // baile (y sube para dejar lugar al video)
     const tx = (Math.random() * 2 - 1) * (forma.tiembla + vibra), ty = (Math.random() * 2 - 1) * (forma.tiembla + vibra);
     for (const lado of [-1, 1]) {
       const cx = W / 2 + lado * sep + ox + tx, cy = H / 2 + oy + ty;
@@ -684,6 +700,64 @@
   }
 
   // =====================================================================
+  // MÚSICA: videos de YouTube (por ejemplo, para guardar los juguetes)
+  // =====================================================================
+  function listaCanciones() {
+    return (cfg.canciones || '').split('\n').map(l => {
+      const [nombre, link] = l.includes('|') ? l.split('|') : ['', l];
+      const m = /(?:v=|youtu\.be\/|shorts\/|embed\/)([\w-]{11})/.exec(link || '');
+      return m ? { nombre:(nombre || 'Canción').trim(), id:m[1] } : null;
+    }).filter(Boolean);
+  }
+  let yt = null, ytListo = null, charlaPausada = false, cancionActual = -1;
+  function cargarYT() {
+    if (ytListo) return ytListo;
+    ytListo = new Promise(res => {
+      window.onYouTubeIframeAPIReady = res;
+      const sc = document.createElement('script'); sc.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(sc);
+    });
+    return ytListo;
+  }
+  function ubicarCerrar() {
+    const r = $('musica').getBoundingClientRect(), b = $('cerrarMusica');
+    b.style.left = (r.right - 22) + 'px'; b.style.top = (r.top - 18) + 'px';
+  }
+  async function ponerMusica(n = 0) {
+    const lista = listaCanciones();
+    if (!lista.length) { mostrarError('No hay canciones cargadas en el engranaje'); return; }
+    n = Math.max(0, Math.min(lista.length - 1, n)); cancionActual = n;
+    if (modoCharla) { charlaPausada = true; activarCharla(false); }
+    if (modoLoro) activarLoro(false);
+    $('musica').classList.add('visible'); $('cerrarMusica').style.display = 'block'; ubicarCerrar();
+    bailando = true; ponerEmocion('contento', 3600000);
+    anotar('🎵 ' + lista[n].nombre);
+    await cargarYT();
+    if (yt) { yt.loadVideoById(lista[n].id); return; }
+    yt = new YT.Player('ytPlayer', {
+      host:'https://www.youtube-nocookie.com', videoId:lista[n].id,
+      playerVars:{ autoplay:1, playsinline:1, rel:0, modestbranding:1, fs:0 },
+      events:{
+        onReady: e => e.target.playVideo(),
+        onStateChange: e => { if (e.data === YT.PlayerState.ENDED) terminarMusica(true); },
+        onError: () => { // ese video no se deja poner acá: probamos con el siguiente
+          anotar('⚠ no se pudo poner: ' + (listaCanciones()[cancionActual] || {}).nombre);
+          const l = listaCanciones();
+          if (cancionActual + 1 < l.length) ponerMusica(cancionActual + 1); else { terminarMusica(false); mostrarError('No se pudo poner la canción'); }
+        },
+      },
+    });
+  }
+  function terminarMusica(festejar) {
+    try { yt && yt.stopVideo(); } catch (e) {}
+    $('musica').classList.remove('visible'); $('cerrarMusica').style.display = 'none';
+    bailando = false; ponerEmocion('normal');
+    const reanudar = () => { if (charlaPausada) { charlaPausada = false; activarCharla(true); } };
+    if (festejar) hablar('¡Bravo! ¡Qué lindo cantamos! ¿Quedó todo ordenadito?', 'risa').then(reanudar);
+    else reanudar();
+  }
+  addEventListener('resize', () => { if ($('musica').classList.contains('visible')) ubicarCerrar(); });
+
+  // =====================================================================
   // CEREBRO: la IA
   // =====================================================================
   let historial = [];
@@ -710,6 +784,10 @@ Reglas de cuidado (muy importantes):
 
 ${(cfg.ensenanzas || '').trim() ? `Cosas buenas que los papás te pidieron que le enseñes (sacalas de vez en cuando en la charla, no en cada respuesta; siempre de forma divertida y cariñosa, como un juego, un desafío o una canción, nunca retándola; si la nena cuenta que lo hizo, festejalo mucho):
 ${cfg.ensenanzas.trim().split('\n').filter(l => l.trim()).map(l => '- ' + l.trim()).join('\n')}
+
+` : ''}${listaCanciones().length ? `Canciones que podés poner en el robot (de YouTube):
+${listaCanciones().map((c, i) => `${i + 1}. ${c.nombre}`).join('\n')}
+Para poner una, terminá tu respuesta con la etiqueta [cancion:NÚMERO], por ejemplo [cancion:1]. Ponela cuando sea hora de juntar los juguetes o cuando la nena pida esa canción. No pongas música todo el tiempo.
 
 ` : ''}Si un mensaje empieza con "[Mensaje de los papás]", no lo dijo la nena: es algo que los papás quieren que le digas ahora. Decíselo vos, con tus palabras, de forma cariñosa y divertida (por ejemplo, como una misión o un juego), en una o dos frases.
 
@@ -803,9 +881,11 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   function separar(respuesta) {
     const m = /^\s*\[([a-záéíóúñ]+)\]\s*/i.exec(respuesta);
     const emo = (m && EMOCIONES_IA[m[1].toLowerCase()]) || 'contento';
+    const mc = /\[canci[oó]n:\s*(\d+)\s*\]/i.exec(respuesta);
+    const cancion = mc ? parseInt(mc[1], 10) - 1 : -1;
     const texto = respuesta.replace(/\[[^\]]*\]/g, '').replace(/[*_#~`>]/g, '')
       .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '').replace(/\s+/g, ' ').trim();
-    return { emo, texto };
+    return { emo, texto, cancion };
   }
 
   async function conversar(lo_que_dijo, dePapas = false) {
@@ -835,12 +915,13 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
       seguirCharla();
       return;
     }
-    const { emo, texto } = separar(respuesta);
+    const { emo, texto, cancion } = separar(respuesta);
     if (!texto) { historial.pop(); estado = 'libre'; await hablar('Mmm, me olvidé lo que iba a decir.', 'pensando'); seguirCharla(); return; }
     historial.push({ role:'assistant', content:respuesta.trim() });
     anotar('🤖 ' + texto);
     estado = 'libre';
     await hablar(texto, emo);
+    if (cancion >= 0) { ponerMusica(cancion); return; }
     seguirCharla();
   }
 
@@ -923,6 +1004,11 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
     if (estado === 'libre') conversar(t);
   });
   $('texto').addEventListener('keydown', e => { if (e.key === 'Enter') $('enviar').click(); });
+  $('canciones').value = cfg.canciones || '';
+  $('canciones').addEventListener('input', e => { cfg.canciones = e.target.value; guardar(); });
+  $('probarCancion').addEventListener('click', () => { panel.classList.remove('abierto'); ponerMusica(0); });
+  $('pararMusica').addEventListener('click', () => terminarMusica(false));
+  $('cerrarMusica').addEventListener('click', () => terminarMusica(false));
   $('ensenanzas').value = cfg.ensenanzas || '';
   $('ensenanzas').addEventListener('input', e => { cfg.ensenanzas = e.target.value; guardar(); });
   function enviarMensaje(aSuManera) {
@@ -972,7 +1058,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '18';
+  const VERSION = '19';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
@@ -989,7 +1075,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
       if (v && v !== VERSION) { hayNueva = true; $('version').textContent = `Versión ${VERSION} · hay una nueva (${v}) ✨`; }
     } catch (e) {}
   }
-  const tranquilo = () => estado === 'libre' && !modoCharla && !modoLoro && !hablandoAnim &&
+  const tranquilo = () => estado === 'libre' && !modoCharla && !modoLoro && !bailando && !hablandoAnim &&
     !(('speechSynthesis' in window) && speechSynthesis.speaking) && !panel.classList.contains('abierto') && !inicioToque;
   setInterval(buscarVersion, 2 * 60 * 1000);
   setTimeout(buscarVersion, 15000);
