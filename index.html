@@ -178,7 +178,7 @@
     sorpresa:   { w:1.12, h:1.18, r:0.50, enojo:0,    preoc:0,    alegre:0, color:CYAN,          tiembla:0 },
     triste:     { w:0.95, h:0.85, r:0.30, enojo:0,    preoc:0.45, alegre:0, color:[90,160,255],  tiembla:0 },
     pensando:   { w:0.95, h:0.70, r:0.30, enojo:0.12, preoc:0,    alegre:0, color:CYAN,          tiembla:0 },
-    escuchando: { w:1.05, h:1.10, r:0.45, enojo:0,    preoc:0,    alegre:0, color:[80,255,150],  tiembla:1.5 },
+    escuchando: { w:1.05, h:1.10, r:0.45, enojo:0,    preoc:0,    alegre:0, color:[80,255,150],  tiembla:0 },
     llanto:     { w:0.95, h:0.70, r:0.35, enojo:0,    preoc:0.55, alegre:0, color:[90,160,255],  tiembla:1 },
   };
   const ESPECIALES = ['risa', 'cruz', 'mareado', 'dormido'];
@@ -228,6 +228,24 @@
       ctx.ellipse(cx, y + h * (1.45 - 0.6 * f.alegre), w * 0.85, h * 0.62, 0, 0, Math.PI * 2);
       ctx.fill();
     }
+  }
+  // Onditas de sonido dentro del ojo: muestran que está escuchando (más grandes cuando la nena habla)
+  function onditas(cx, cy, w, h, t, lado) {
+    ctx.save();
+    rectRedondo(cx - w / 2, cy - h / 2, w, h, Math.min(w, h) * forma.r); ctx.clip();
+    ctx.shadowBlur = 0; ctx.lineCap = 'round';
+    for (let k = -1; k <= 1; k++) {
+      const amp = h * (0.035 + nivelVoz * 0.16) * (k === 0 ? 1 : 0.6);
+      ctx.strokeStyle = `rgba(0,60,30,${k === 0 ? 0.55 : 0.35})`;
+      ctx.lineWidth = Math.max(2, w * 0.045);
+      ctx.beginPath();
+      for (let x = -w / 2; x <= w / 2; x += 4) {
+        const y = cy + k * h * 0.22 + Math.sin(x / w * Math.PI * 3 - t * 8 * lado + k) * amp;
+        x === -w / 2 ? ctx.moveTo(cx + x, y) : ctx.lineTo(cx + x, y);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
   }
   function ojoRisa(cx, cy, w, h, t) {
     const color = rgb(forma.color), salto = Math.abs(Math.sin(t * 14)) * h * 0.08;
@@ -339,10 +357,7 @@
     let escala = 1, vibra = 0;
     if (nenaHablando) nivelVoz = Math.max(nivelVoz, 0.6 + 0.4 * Math.random());
     nivelVoz *= 0.9;
-    if (emocion === 'escuchando') {
-      escala = 1 + 0.05 * Math.sin(t * 6) + nivelVoz * 0.12;
-      vibra = nivelVoz * 14;
-    }
+    if (emocion === 'escuchando') escala = 1 + 0.03 * Math.sin(t * 4) + nivelVoz * 0.04;
 
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
     const base = Math.min(W * 0.24, H * 0.5) * escala;
@@ -358,6 +373,7 @@
       else if (emocion === 'mareado') ojoEspiral(cx, cy, w, base, t, lado);
       else if (emocion === 'dormido') ojoDormido(cx, cy, w, base);
       else ojoBase(cx, cy, w, h, lado, forma);
+      if (emocion === 'escuchando') onditas(cx, cy, w, h, t, lado);
       if (emocion === 'llanto') lagrimas(cx, cy + base * forma.h * 0.35, base, t, lado);
     }
     if (emocion === 'miedo') gotaSudor(W / 2 + sep + base * 0.6, H / 2 - base * 0.55, base * 0.12, t);
@@ -391,14 +407,40 @@
     if (!largo && !cosquillas && recorrido < 25 && dur < 400 && estado === 'libre') {
       const ahora = performance.now();
       toques = toques.filter(x => ahora - x < 3000); toques.push(ahora);
-      if (toques.length >= 7 || emocion === 'llanto') ponerEmocion('llanto', 4000);
-      else if (toques.length >= 4 || emocion === 'enojado') ponerEmocion('enojado', 3000);
-      else ponerEmocion('cruz', 1100);
+      let nueva;
+      if (toques.length >= 7 || emocion === 'llanto') nueva = 'llanto';
+      else if (toques.length >= 4 || emocion === 'enojado') nueva = 'enojado';
+      else nueva = 'cruz';
+      const esNueva = nueva !== emocion;
+      ponerEmocion(nueva, nueva === 'llanto' ? 4000 : nueva === 'enojado' ? 3000 : 1100);
+      if (esNueva || nueva !== 'cruz' || Math.random() < 0.4) decirFrase(nueva);
     }
     inicioToque = null; dedo = null;
   }
   cv.addEventListener('pointerup', soltar);
   cv.addEventListener('pointercancel', soltar);
+
+  // =====================================================================
+  // FRASES GRACIOSAS cuando le pegan, lo marean o se cae
+  // =====================================================================
+  const FRASES = {
+    cruz:    ['¡Auch!', '¡Ey, despacito!', '¡Uy! Eso me hizo cosquillas en los circuitos.', '¡Ay, mi pantallita!', '¡Epa! ¿Y eso?'],
+    enojado: ['¡No me pegues, che!', '¡Me estás haciendo enojar!', '¡Ey! ¡Que soy un robot sensible!', '¡Basta, que se me desatornillan los ojos!', '¡Uf! Me salen chispitas de la bronca.'],
+    llanto:  ['¡Buaaa! ¡Me pegaste!', 'Buaaa… ahora estoy triste. ¿Me das un abrazo?', '¡Buaaa! Los robots también tenemos sentimientos.'],
+    mareado: ['¡Uy, qué mareo! Todo me da vueltas.', '¡Wiii! ¿Otra vez? No, mejor no.', '¡Ay, me mareé! ¿Dónde estoy?'],
+    miedo:   ['¡Aaah! ¡Cuidado que me caigo!', '¡Uy! ¡Qué susto!', '¡Agarrame fuerte, por favor!'],
+  };
+  let ultimaFrase = 0, fraseAnterior = '';
+  function decirFrase(tipo) {
+    const ahora = performance.now();
+    if (ahora - ultimaFrase < 2500 || estado !== 'libre' || modoCharla || modoLoro) return;
+    if ('speechSynthesis' in window && speechSynthesis.speaking) return;
+    const lista = FRASES[tipo]; if (!lista) return;
+    let f; do { f = lista[Math.floor(Math.random() * lista.length)]; } while (f === fraseAnterior && lista.length > 1);
+    fraseAnterior = f; ultimaFrase = ahora;
+    const emo = emocion;
+    hablar(f, emo, { sinBips:true }).then(() => { if (emocion === emo) ponerEmocion(emo, 800); });
+  }
 
   // =====================================================================
   // SENSORES
@@ -420,9 +462,9 @@
     marca.style.left = Math.min(100, umbral / 5 * 100) + '%';
     if (ahora < pausaSensor || estado === 'escuchando') return;
     tiempoCaida = mag < 3 ? tiempoCaida + dt : 0;
-    if (tiempoCaida > 60) { ponerEmocion('miedo', 2500); pausaSensor = ahora + 2600; tiempoCaida = 0; return; }
+    if (tiempoCaida > 60) { ponerEmocion('miedo', 2500); decirFrase('miedo'); pausaSensor = ahora + 2600; tiempoCaida = 0; return; }
     tiempoAlto = actividad > umbral ? tiempoAlto + dt : Math.max(0, tiempoAlto - dt);
-    if (tiempoAlto > 350 && emocion !== 'mareado') { ponerEmocion('mareado', 3000); pausaSensor = ahora + 3200; tiempoAlto = 0; }
+    if (tiempoAlto > 350 && emocion !== 'mareado') { ponerEmocion('mareado', 3000); decirFrase('mareado'); pausaSensor = ahora + 3200; tiempoAlto = 0; }
   });
   setTimeout(() => { if (!vioSensor) $('estadoSensor').textContent = 'Sensor: no llega señal (¿está abierto en Chrome?)'; }, 4000);
 
@@ -899,7 +941,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '16';
+  const VERSION = '17';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
