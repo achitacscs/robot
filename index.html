@@ -86,7 +86,8 @@
   <label>Nombre del robot <input id="nomRobot" type="text" placeholder="Bipo"></label>
   <label>Nombre de la nena (opcional) <input id="nomNena" type="text" placeholder="sin nombre"></label>
   <label>Voz <select id="voz"><option value="">Automática (español)</option></select></label>
-  <div class="fila"><button id="vozNena" style="flex:1">👧 Voz de nena</button></div>
+  <div class="fila"><button id="vozNena" style="flex:1">👧 Voz de nena</button><button id="vozRobot" style="flex:1">🤖 Voz de robot</button></div>
+  <label><input id="bips" type="checkbox"> Bip-bup antes de hablar</label>
   <label>Tono de voz <input id="tono" type="range" min="0.5" max="2" step="0.1"></label>
   <label>Velocidad de voz <input id="velocidad" type="range" min="0.6" max="1.4" step="0.05"></label>
   <div class="fila"><button id="probarVoz">Probar voz</button><button id="probarMic">Probar micrófono</button></div>
@@ -377,7 +378,32 @@
   }
   if ('speechSynthesis' in window) { elegirVoz(); speechSynthesis.onvoiceschanged = elegirVoz; }
 
-  function hablar(texto, emo = 'contento') {
+  // Sonidos de robot (bip-bup) con el sintetizador del navegador
+  let audioCtx = null;
+  function prepararAudio() {
+    try { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); } catch (e) {}
+  }
+  function bips() {
+    if (!audioCtx) return Promise.resolve();
+    const n = 2 + Math.floor(Math.random() * 3);
+    let t = audioCtx.currentTime + 0.02;
+    for (let i = 0; i < n; i++) {
+      const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(500 + Math.random() * 900, t);
+      osc.frequency.exponentialRampToValueAtTime(400 + Math.random() * 1100, t + 0.08);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.12, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+      osc.connect(g).connect(audioCtx.destination);
+      osc.start(t); osc.stop(t + 0.1);
+      t += 0.11;
+    }
+    return new Promise(r => setTimeout(r, n * 110 + 80));
+  }
+
+  async function hablar(texto, emo = 'contento') {
+    if (cfg.bips) await bips();
     return new Promise(resolve => {
       if (!('speechSynthesis' in window)) { ponerEmocion(emo, 3000); return resolve(); }
       speechSynthesis.cancel();
@@ -554,6 +580,16 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   $('nomNena').addEventListener('input', e => { cfg.nomNena = e.target.value; guardar(); });
   $('tono').value = cfg.tono; $('velocidad').value = cfg.velocidad;
   $('tono').addEventListener('input', e => { cfg.tono = parseFloat(e.target.value); guardar(); });
+  // Voz de robot: tono grave, un poco más lenta y con bip-bup
+  $('vozRobot').addEventListener('click', () => {
+    prepararAudio();
+    cfg.tono = 0.5; cfg.velocidad = 0.9; cfg.bips = true;
+    $('tono').value = cfg.tono; $('velocidad').value = cfg.velocidad; $('bips').checked = true;
+    guardar();
+    hablar(`Bip bup. Soy ${cfg.nomRobot.trim() || 'Bipo'}, tu robot amigo.`, 'contento');
+  });
+  $('bips').checked = !!cfg.bips;
+  $('bips').addEventListener('change', e => { cfg.bips = e.target.checked; guardar(); prepararAudio(); });
   $('voz').addEventListener('change', e => {
     cfg.voz = e.target.value; guardar(); elegirVoz();
     hablar('Hola, así suena mi voz.', 'contento');
@@ -606,7 +642,8 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
     try { await screen.orientation.lock('landscape'); } catch (e) {}
     mantenerEncendida();
   }
-  $('inicio').addEventListener('pointerdown', ev => { ev.currentTarget.remove(); completa(); });
+  $('inicio').addEventListener('pointerdown', ev => { ev.currentTarget.remove(); prepararAudio(); completa(); });
+  $('mic').addEventListener('pointerdown', prepararAudio);
   $('btnFull').addEventListener('click', completa);
 
   // Para usar desde otros módulos más adelante (motores, etc.)
