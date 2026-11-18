@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#000000">
 <meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <title>Robot – ojitos y charla</title>
 <style>
   html, body { margin:0; height:100%; background:#000; overflow:hidden; touch-action:none;
@@ -729,6 +732,9 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   $('inicio').addEventListener('pointerdown', ev => { ev.currentTarget.remove(); prepararAudio(); completa(); });
   $('mic').addEventListener('pointerdown', prepararAudio);
   $('btnFull').addEventListener('click', completa);
+
+  // Permite instalar como app
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 
   // Para usar desde otros módulos más adelante (motores, etc.)
   window.robot = { emocion:ponerEmocion, hablar, escuchar, conversar,
