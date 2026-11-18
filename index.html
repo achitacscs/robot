@@ -519,8 +519,17 @@
     reconocedor.onsoundstart = reconocedor.onspeechstart = () => { nenaHablando = true; };
     reconocedor.onspeechend = reconocedor.onsoundend = () => { nenaHablando = false; };
     reconocedor.onerror = e => {
-      if (e.error === 'not-allowed') avisoIA('Falta permiso de micrófono para Chrome.');
-      else if (e.error !== 'no-speech' && e.error !== 'aborted') avisoIA('Micrófono: ' + e.error);
+      const MSJ = {
+        'not-allowed': 'El micrófono está bloqueado para el robot.\nMantené apretado el ícono del robot → Info de la app → Permisos → Micrófono → Permitir.',
+        'service-not-allowed': 'El celular no deja usar el reconocimiento de voz.\nRevisá que Chrome y la app "Google" tengan permiso de micrófono.',
+        'audio-capture': 'No se encontró el micrófono, o lo está usando otra app.',
+        'network': 'El reconocimiento de voz necesita internet y no hay conexión.',
+        'language-not-supported': 'El celular no tiene el español para reconocer voz.',
+      };
+      if (e.error === 'no-speech' || e.error === 'aborted') return;
+      const txt = MSJ[e.error] || ('Micrófono: ' + e.error);
+      avisoIA(txt); anotar('⚠ mic: ' + e.error); mostrarError(txt);
+      if (['not-allowed','service-not-allowed','audio-capture','language-not-supported'].includes(e.error) && modoCharla) activarCharla(false);
     };
     reconocedor.onend = () => {
       nenaHablando = false;
@@ -554,7 +563,10 @@
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true } });
-    } catch (e) { avisoIA('Falta permiso de micrófono para el modo loro.'); mostrarError('Falta permiso de micrófono para el modo loro'); return; }
+    } catch (e) {
+      const txt = 'El modo loro no pudo usar el micrófono (' + e.name + ').\nMantené apretado el ícono del robot → Info de la app → Permisos → Micrófono → Permitir.';
+      avisoIA(txt); anotar('⚠ loro: ' + e.name); mostrarError(txt); return;
+    }
     modoLoro = true; $('loro').classList.add('activo');
     const ctxA = audioCtx, sr = ctxA.sampleRate;
     const fuente = ctxA.createMediaStreamSource(stream);
@@ -866,8 +878,15 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '14';
+  const VERSION = '15';
   $('version').textContent = 'Versión ' + VERSION;
+  try {
+    navigator.permissions.query({ name:'microphone' }).then(p => {
+      const mostrar = () => { $('estadoSensor').dataset.mic = p.state;
+        $('estadoIA').textContent = 'Permiso de micrófono: ' + ({ granted:'permitido ✔', denied:'BLOQUEADO ✖ (activalo en Info de la app → Permisos)', prompt:'lo va a pedir la primera vez' }[p.state] || p.state); };
+      mostrar(); p.onchange = mostrar;
+    }).catch(() => {});
+  } catch (e) {}
   let hayNueva = false;
   async function buscarVersion() {
     try {
