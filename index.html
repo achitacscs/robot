@@ -22,7 +22,7 @@
   #mic { position:fixed; left:50%; bottom:12px; transform:translateX(-50%); width:64px; height:64px;
     border-radius:50%; border:2px solid #3ff0ff55; background:#3ff0ff18; color:#3ff0ffcc; font-size:28px; z-index:3; }
   #mic.oculto, #loro.oculto { display:none; }
-  #musica { position:fixed; left:50%; bottom:10px; transform:translateX(-50%); width:min(46vw, 70vh); aspect-ratio:16/9;
+  #musica { position:fixed; left:50%; bottom:86px; transform:translateX(-50%); width:min(40vw, 52vh); aspect-ratio:16/9;
     border:3px solid #3ff0ff88; border-radius:14px; overflow:hidden; background:#000; z-index:3; display:none; box-shadow:0 0 24px #3ff0ff55; }
   #musica.visible { display:block; }
   #musica iframe { width:100%; height:100%; border:0; }
@@ -386,11 +386,11 @@
     if (emocion === 'escuchando') escala = 1 + 0.03 * Math.sin(t * 4) + nivelVoz * 0.04;
 
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
-    const base = Math.min(W * 0.24, H * 0.5) * escala;
+    const base = Math.min(W * 0.24, H * 0.5) * escala * (bailando ? 0.7 : 1);
     const sep = Math.min(W * 0.19, base * 1.05);
     const ox = mirada.x * W * 0.1 + (bailando ? Math.sin(t * 4) * base * 0.12 : 0);
     const oy = mirada.y * H * 0.12 + (emocion === 'llanto' ? Math.abs(Math.sin(t * 7)) * base * 0.05 : 0) // sollozo
-      - (bailando ? Math.abs(Math.sin(t * 8)) * base * 0.08 + base * 0.25 : 0); // baile (y sube para dejar lugar al video)
+      - (bailando ? Math.abs(Math.sin(t * 8)) * base * 0.08 + base * 0.3 : 0); // baile (y sube para dejar lugar al video)
     const tx = (Math.random() * 2 - 1) * (forma.tiembla + vibra), ty = (Math.random() * 2 - 1) * (forma.tiembla + vibra);
     for (const lado of [-1, 1]) {
       const cx = W / 2 + lado * sep + ox + tx, cy = H / 2 + oy + ty;
@@ -1058,7 +1058,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '19';
+  const VERSION = '20';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
