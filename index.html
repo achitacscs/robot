@@ -19,6 +19,7 @@
   #mic { position:fixed; left:50%; bottom:12px; transform:translateX(-50%); width:64px; height:64px;
     border-radius:50%; border:2px solid #3ff0ff55; background:#3ff0ff18; color:#3ff0ffcc; font-size:28px; z-index:3; }
   #mic.oculto { display:none; }
+  #mic.activo { background:#50ff9640; border-color:#50ff96; color:#50ff96; box-shadow:0 0 18px #50ff96aa; }
   #panel { position:fixed; right:8px; bottom:60px; top:8px; width:330px; max-width:calc(100vw - 16px);
     background:#0d161bf2; border:1px solid #234; border-radius:14px; padding:12px; display:none; z-index:4;
     color:#bfe; overflow:auto; touch-action:pan-y; -webkit-user-select:text; user-select:text; box-sizing:border-box; }
@@ -93,7 +94,7 @@
   <div class="fila"><button id="probarVoz">Probar voz</button><button id="probarMic">Probar micrófono</button></div>
   <label><input id="verMic" type="checkbox"> Mostrar botón de micrófono</label>
   <div class="fila"><input id="texto" type="text" placeholder="Escribile algo para probar"><button id="enviar">Enviar</button></div>
-  <div id="estadoIA">Para hablarle: botón 🎤 o dejar el dedo apoyado en la pantalla.</div>
+  <div id="estadoIA">Para charlar: tocá el 🎤 (o dejá el dedo apoyado). Queda escuchando hasta que lo toques de nuevo.</div>
 
   <h4>Charla de hoy</h4>
   <div id="charla"></div>
@@ -149,6 +150,9 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
   addEventListener('resize', ajustar); ajustar();
+  document.addEventListener('fullscreenchange', () => setTimeout(ajustar, 50));
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(ajustar, 50); });
+  addEventListener('error', e => { try { anotar('⚠ JS: ' + e.message); } catch (_) {} });
 
   const CYAN = [63,240,255];
   const BASE = {
@@ -252,7 +256,13 @@
     ctx.globalAlpha = 1;
   }
 
+  // El bucle de dibujo nunca se corta: si algo falla en un cuadro, se anota y sigue.
   function cuadro(ahora) {
+    try { dibujar(ahora); } catch (e) { try { anotar('⚠ dibujo: ' + e.message); } catch (_) {} }
+    requestAnimationFrame(cuadro);
+  }
+  function dibujar(ahora) {
+    if (W !== innerWidth || H !== innerHeight) ajustar();
     const t = ahora / 1000;
     if (hasta && ahora > hasta) { emocion = 'normal'; hasta = 0; cambio = ahora; }
     const obj = BASE[emocion] || BASE.normal;
@@ -305,7 +315,6 @@
     if (emocion === 'miedo') gotaSudor(W / 2 + sep + base * 0.6, H / 2 - base * 0.55, base * 0.12, t);
     if (emocion === 'dormido') textoFlotante('z', W / 2 + sep + base * 0.5, H / 2 - base * 0.5, base * 0.25, t, 'rgba(63,240,255,0.7)');
     if (emocion === 'pensando') textoFlotante('?', W / 2 + sep + base * 0.7, H / 2 - base * 0.6, base * 0.22, t, 'rgba(63,240,255,0.6)');
-    requestAnimationFrame(cuadro);
   }
   requestAnimationFrame(cuadro);
 
@@ -318,7 +327,7 @@
     recorrido = 0; cosquillas = false; largo = false; dedo = { x:e.clientX, y:e.clientY };
     clearTimeout(timerLargo);
     // dedo apoyado quieto ~0,7 s -> escuchar
-    timerLargo = setTimeout(() => { if (inicioToque && recorrido < 25) { largo = true; escuchar(); } }, 700);
+    timerLargo = setTimeout(() => { if (inicioToque && recorrido < 25) { largo = true; if (!modoCharla) activarCharla(true); } }, 700);
   });
   cv.addEventListener('pointermove', e => {
     if (!inicioToque) return;
@@ -433,6 +442,21 @@
   // =====================================================================
   let estado = 'libre'; // libre | escuchando | pensando
   let reconocedor = null;
+  // Modo charla: después de cada respuesta vuelve a escuchar solo.
+  // Se apaga tocando el mic otra vez, o solo si nadie habla 2 veces seguidas.
+  let modoCharla = false, silencios = 0;
+  function activarCharla(si) {
+    modoCharla = si; silencios = 0;
+    $('mic').classList.toggle('activo', si);
+    if (si) escuchar();
+    else {
+      try { reconocedor && reconocedor.abort(); } catch (e) {}
+      if (estado === 'escuchando') { estado = 'libre'; ponerEmocion('normal'); }
+    }
+  }
+  function seguirCharla() {
+    if (modoCharla) setTimeout(() => { if (modoCharla && estado === 'libre') escuchar(); }, 400);
+  }
   function escuchar() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { avisoIA('Este navegador no tiene reconocimiento de voz. Usá Chrome.'); ponerEmocion('triste', 2000); return; }
@@ -442,12 +466,18 @@
     let entendio = false;
     reconocedor = new SR();
     reconocedor.lang = 'es-AR'; reconocedor.interimResults = false; reconocedor.maxAlternatives = 1;
-    reconocedor.onresult = e => { entendio = true; conversar(e.results[0][0].transcript); };
+    reconocedor.onresult = e => { entendio = true; silencios = 0; conversar(e.results[0][0].transcript); };
     reconocedor.onerror = e => {
       if (e.error === 'not-allowed') avisoIA('Falta permiso de micrófono para Chrome.');
       else if (e.error !== 'no-speech' && e.error !== 'aborted') avisoIA('Micrófono: ' + e.error);
     };
-    reconocedor.onend = () => { if (!entendio) { estado = 'libre'; ponerEmocion('normal'); } };
+    reconocedor.onend = () => {
+      if (entendio) return;
+      estado = 'libre';
+      if (modoCharla && ++silencios < 2) { seguirCharla(); return; }
+      if (modoCharla) { activarCharla(false); ponerEmocion('dormido', 2500); return; }
+      ponerEmocion('normal');
+    };
     estado = 'escuchando'; ponerEmocion('escuchando', 15000);
     try { reconocedor.start(); } catch (err) { estado = 'libre'; ponerEmocion('normal'); }
   }
@@ -589,14 +619,16 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
       mostrarError(tipo.titulo + '\n' + err.message);
       estado = 'libre';
       await hablar(tipo.frase, 'triste');
+      seguirCharla();
       return;
     }
     const { emo, texto } = separar(respuesta);
-    if (!texto) { historial.pop(); estado = 'libre'; await hablar('Mmm, me olvidé lo que iba a decir.', 'pensando'); return; }
+    if (!texto) { historial.pop(); estado = 'libre'; await hablar('Mmm, me olvidé lo que iba a decir.', 'pensando'); seguirCharla(); return; }
     historial.push({ role:'assistant', content:respuesta.trim() });
     anotar('🤖 ' + texto);
     estado = 'libre';
     await hablar(texto, emo);
+    seguirCharla();
   }
 
   // =====================================================================
@@ -658,12 +690,12 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   });
   $('velocidad').addEventListener('input', e => { cfg.velocidad = parseFloat(e.target.value); guardar(); });
   $('probarVoz').addEventListener('click', () => hablar(`¡Hola! Soy ${cfg.nomRobot.trim() || 'Bipo'}. ¿Querés jugar conmigo?`, 'contento'));
-  $('probarMic').addEventListener('click', () => { panel.classList.remove('abierto'); escuchar(); });
+  $('probarMic').addEventListener('click', () => { panel.classList.remove('abierto'); activarCharla(true); });
   $('verMic').checked = cfg.verMic;
   const aplicarMic = () => $('mic').classList.toggle('oculto', !cfg.verMic);
   $('verMic').addEventListener('change', e => { cfg.verMic = e.target.checked; guardar(); aplicarMic(); });
   aplicarMic();
-  $('mic').addEventListener('click', escuchar);
+  $('mic').addEventListener('click', () => activarCharla(!modoCharla));
   $('enviar').addEventListener('click', () => {
     const t = $('texto').value; $('texto').value = '';
     if (estado === 'libre') conversar(t);
