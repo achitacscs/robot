@@ -177,7 +177,7 @@
     sorpresa:   { w:1.12, h:1.18, r:0.50, enojo:0,    preoc:0,    alegre:0, color:CYAN,          tiembla:0 },
     triste:     { w:0.95, h:0.85, r:0.30, enojo:0,    preoc:0.45, alegre:0, color:[90,160,255],  tiembla:0 },
     pensando:   { w:0.95, h:0.70, r:0.30, enojo:0.12, preoc:0,    alegre:0, color:CYAN,          tiembla:0 },
-    escuchando: { w:1.05, h:1.10, r:0.45, enojo:0,    preoc:0,    alegre:0, color:[80,255,150],  tiembla:0 },
+    escuchando: { w:1.05, h:1.10, r:0.45, enojo:0,    preoc:0,    alegre:0, color:[80,255,150],  tiembla:1.5 },
     llanto:     { w:0.95, h:0.70, r:0.35, enojo:0,    preoc:0.55, alegre:0, color:[90,160,255],  tiembla:1 },
   };
   const ESPECIALES = ['risa', 'cruz', 'mareado', 'dormido'];
@@ -187,6 +187,8 @@
   let emocion = 'normal', hasta = 0, cambio = 0;
   const mirada = { x:0, y:0, tx:0, ty:0 }; let proxMirada = 0;
   let parpadeo = -1, proxParpadeo = 0, hablandoAnim = false, dedo = null;
+  // nivelVoz: 0..1, sube cuando la nena habla (los ojos vibran más fuerte)
+  let nivelVoz = 0, nenaHablando = false;
 
   function ponerEmocion(nombre, ms = 2500) {
     if (!(nombre in BASE) && !ESPECIALES.includes(nombre)) return;
@@ -333,15 +335,20 @@
     }
     factorH *= 0.15 + 0.85 * Math.min(1, (ahora - cambio) / 140);
     if (hablandoAnim) factorH *= 0.86 + 0.14 * Math.abs(Math.sin(t * 11));
-    let escala = 1;
-    if (emocion === 'escuchando') escala = 1 + 0.05 * Math.sin(t * 6);
+    let escala = 1, vibra = 0;
+    if (nenaHablando) nivelVoz = Math.max(nivelVoz, 0.6 + 0.4 * Math.random());
+    nivelVoz *= 0.9;
+    if (emocion === 'escuchando') {
+      escala = 1 + 0.05 * Math.sin(t * 6) + nivelVoz * 0.12;
+      vibra = nivelVoz * 14;
+    }
 
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
     const base = Math.min(W * 0.24, H * 0.5) * escala;
     const sep = Math.min(W * 0.19, base * 1.05);
     const ox = mirada.x * W * 0.1;
     const oy = mirada.y * H * 0.12 + (emocion === 'llanto' ? Math.abs(Math.sin(t * 7)) * base * 0.05 : 0); // sollozo
-    const tx = (Math.random() * 2 - 1) * forma.tiembla, ty = (Math.random() * 2 - 1) * forma.tiembla;
+    const tx = (Math.random() * 2 - 1) * (forma.tiembla + vibra), ty = (Math.random() * 2 - 1) * (forma.tiembla + vibra);
     for (const lado of [-1, 1]) {
       const cx = W / 2 + lado * sep + ox + tx, cy = H / 2 + oy + ty;
       const w = base * forma.w * 0.9, h = base * forma.h * factorH;
@@ -508,12 +515,15 @@
     let entendio = false;
     reconocedor = new SR();
     reconocedor.lang = 'es-AR'; reconocedor.interimResults = false; reconocedor.maxAlternatives = 1;
-    reconocedor.onresult = e => { entendio = true; silencios = 0; conversar(e.results[0][0].transcript); };
+    reconocedor.onresult = e => { entendio = true; silencios = 0; nenaHablando = false; conversar(e.results[0][0].transcript); };
+    reconocedor.onsoundstart = reconocedor.onspeechstart = () => { nenaHablando = true; };
+    reconocedor.onspeechend = reconocedor.onsoundend = () => { nenaHablando = false; };
     reconocedor.onerror = e => {
       if (e.error === 'not-allowed') avisoIA('Falta permiso de micrófono para Chrome.');
       else if (e.error !== 'no-speech' && e.error !== 'aborted') avisoIA('Micrófono: ' + e.error);
     };
     reconocedor.onend = () => {
+      nenaHablando = false;
       if (entendio) return;
       estado = 'libre';
       if (modoCharla && ++silencios < 2) { seguirCharla(); return; }
@@ -560,6 +570,7 @@
       const rms = Math.sqrt(suma / d.length), ahora = performance.now();
       const umbral = Math.max(0.025, loro.piso * 3);
       const hayVoz = rms > umbral;
+      if (hayVoz) nivelVoz = Math.max(nivelVoz, Math.min(1, rms * 8));
       if (!loro.trozos) {
         loro.piso = loro.piso * 0.95 + rms * 0.05;           // ruido de fondo
         loro.previo.push(d); if (loro.previo.length > 8) loro.previo.shift(); // ~0,3 s antes de que empiece a hablar
@@ -855,7 +866,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '13';
+  const VERSION = '14';
   $('version').textContent = 'Versión ' + VERSION;
   let hayNueva = false;
   async function buscarVersion() {
