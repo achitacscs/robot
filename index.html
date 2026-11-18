@@ -114,7 +114,7 @@
   // CONFIGURACIÓN (se guarda solo en este celular)
   // =====================================================================
   const PROVEEDORES = {
-    gemini: { modelo:'gemini-flash-latest',
+    gemini: { modelo:'gemini-flash-lite-latest', respaldo:'gemini-2.5-flash',
       aviso:'Gratis con límites. Ojo: en el nivel gratis Google puede usar las charlas para mejorar sus productos. Usalo para probar.' },
     claude: { modelo:'claude-haiku-5-5', aviso:'Pago por uso (muy barato). Poné un tope de gasto en la consola de Anthropic.' },
     openai: { modelo:'gpt-6-luna', aviso:'Pago por uso (muy barato). Poné un tope de gasto en la consola de OpenAI.' },
@@ -479,6 +479,8 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
       return { titulo:'La clave de API no funciona (revisá que esté completa)', frase:'Mi clave no funciona. Pedile a un grande que la revise.' };
     if (s === 404 || /not found|is not supported/.test(m))
       return { titulo:'No existe ese modelo (revisá el campo Modelo)', frase:'No encuentro mi cerebro. Pedile a un grande que lo revise.' };
+    if (s === 503 || s === 500 || s === 504 || /high demand|overloaded|unavailable/.test(m))
+      return { titulo:'La IA está saturada o tardó mucho (es temporal)', frase:'Estoy medio dormidito. ¿Me lo repetís?' };
     if (s === 429 || /quota|rate|exhausted/.test(m))
       return { titulo:'Se pasó del límite gratis por ahora', frase:'Estoy cansadito. Esperá un ratito y me preguntás de nuevo.' };
     if (err.red) return { titulo:'Sin conexión a internet', frase:'Uy, me quedé sin señal. ¿Me lo decís de nuevo?' };
@@ -498,8 +500,13 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   }
   async function pedir(url, opciones) {
     let r;
-    try { r = await fetch(url, opciones); }
-    catch (e) { throw Object.assign(new Error('No se pudo conectar: ' + e.message), { red:true }); }
+    const ctrl = new AbortController(), limite = setTimeout(() => ctrl.abort(), 20000);
+    try { r = await fetch(url, { ...opciones, signal:ctrl.signal }); }
+    catch (e) {
+      if (e.name === 'AbortError') throw Object.assign(new Error('La IA tardó demasiado en responder'), { status:504 });
+      throw Object.assign(new Error('No se pudo conectar: ' + e.message), { red:true });
+    }
+    finally { clearTimeout(limite); }
     const datos = await r.json().catch(() => ({}));
     if (!r.ok) throw Object.assign(new Error(`${r.status}: ${datos.error?.message || datos.message || 'sin detalle'}`), { status:r.status });
     return datos;
@@ -511,14 +518,20 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
     if (!clave) throw Object.assign(new Error('Falta la clave de API'), { sinClave:true });
     let datos;
     if (prov === 'gemini') {
-      datos = await pedir(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:generateContent?key=${encodeURIComponent(clave)}`, {
-        method:'POST', headers:{ 'Content-Type':'application/json' },
-        body: JSON.stringify({
-          system_instruction:{ parts:[{ text:reglas() }] },
-          contents: historial.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts:[{ text:m.content }] })),
-          generationConfig:{ maxOutputTokens:2000, temperature:0.8 },
-        }),
+      const cuerpo = JSON.stringify({
+        system_instruction:{ parts:[{ text:reglas() }] },
+        contents: historial.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts:[{ text:m.content }] })),
+        generationConfig:{ maxOutputTokens:2000, temperature:0.8 },
       });
+      const llamar = mod => pedir(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(mod)}:generateContent?key=${encodeURIComponent(clave)}`,
+        { method:'POST', headers:{ 'Content-Type':'application/json' }, body:cuerpo });
+      try { datos = await llamar(modelo); }
+      catch (err) {
+        // si el modelo está saturado o tarda, probamos con el de respaldo
+        const respaldo = PROVEEDORES.gemini.respaldo;
+        if ([429, 500, 503, 504].includes(err.status) && respaldo !== modelo) datos = await llamar(respaldo);
+        else throw err;
+      }
       return (datos.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('');
     }
     if (prov === 'claude') {
