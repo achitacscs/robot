@@ -266,6 +266,11 @@
   }
   function dibujar(ahora) {
     if (W !== innerWidth || H !== innerHeight) ajustar();
+    if (W < 20 || H < 20) return; // pantalla en transición: esperar
+    // Si algún valor se rompió (NaN/infinito), lo reseteamos para que los ojos nunca desaparezcan
+    if (![mirada.x, mirada.y, mirada.tx, mirada.ty].every(Number.isFinite)) { mirada.x = mirada.y = mirada.tx = mirada.ty = 0; }
+    for (const k of CLAVES_FORMA) if (!Number.isFinite(forma[k])) forma[k] = BASE.normal[k];
+    if (!forma.color.every(Number.isFinite)) forma.color = [...CYAN];
     const t = ahora / 1000;
     if (hasta && ahora > hasta) { emocion = 'normal'; hasta = 0; cambio = ahora; }
     const obj = BASE[emocion] || BASE.normal;
@@ -274,8 +279,8 @@
     for (let i = 0; i < 3; i++) forma.color[i] = lerp(forma.color[i], colorObj[i], 0.15);
 
     if (dedo) {
-      mirada.tx = Math.max(-1, Math.min(1, (dedo.x - W / 2) / (W / 2)));
-      mirada.ty = Math.max(-1, Math.min(1, (dedo.y - H / 2) / (H / 2)));
+      mirada.tx = Math.max(-1, Math.min(1, (dedo.x - W / 2) / (W / 2))) || 0;
+      mirada.ty = Math.max(-1, Math.min(1, (dedo.y - H / 2) / (H / 2))) || 0;
     } else if (emocion === 'normal' && ahora > proxMirada) {
       const centro = Math.random() < 0.35;
       mirada.tx = centro ? 0 : Math.random() * 2 - 1;
@@ -481,6 +486,7 @@
       if (modoCharla) { activarCharla(false); ponerEmocion('dormido', 2500); return; }
       ponerEmocion('normal');
     };
+    dedo = null; mirada.tx = 0; mirada.ty = 0;
     estado = 'escuchando'; ponerEmocion('escuchando', 15000);
     try { reconocedor.start(); } catch (err) { estado = 'libre'; ponerEmocion('normal'); }
   }
