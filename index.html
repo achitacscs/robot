@@ -125,6 +125,16 @@
   };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem('robot_cfg') || '{}')); } catch (e) {}
   const guardar = () => { try { localStorage.setItem('robot_cfg', JSON.stringify(cfg)); } catch (e) {} };
+  // Link de configuración: .../robot/#clave=XXXX guarda la clave en este celular y la borra de la dirección.
+  // (lo que va después de # no viaja a ningún servidor ni queda en el código publicado)
+  (() => {
+    const m = /^#clave=([A-Za-z0-9_\-]+)/.exec(location.hash);
+    if (!m) return;
+    cfg.claves = cfg.claves || {}; cfg.claves.gemini = m[1]; cfg.prov = 'gemini';
+    if (cfg.modelos) delete cfg.modelos.gemini;
+    guardar();
+    history.replaceState(null, '', location.pathname);
+  })();
   const $ = id => document.getElementById(id);
 
   // =====================================================================
