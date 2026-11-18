@@ -85,6 +85,8 @@
   <label>Modelo <input id="modelo" type="text" autocomplete="off"></label>
   <label>Nombre del robot <input id="nomRobot" type="text" placeholder="Bipo"></label>
   <label>Nombre de la nena (opcional) <input id="nomNena" type="text" placeholder="sin nombre"></label>
+  <label>Voz <select id="voz"><option value="">Automática (español)</option></select></label>
+  <div class="fila"><button id="vozNena" style="flex:1">👧 Voz de nena</button></div>
   <label>Tono de voz <input id="tono" type="range" min="0.5" max="2" step="0.1"></label>
   <label>Velocidad de voz <input id="velocidad" type="range" min="0.6" max="1.4" step="0.05"></label>
   <div class="fila"><button id="probarVoz">Probar voz</button><button id="probarMic">Probar micrófono</button></div>
@@ -361,8 +363,17 @@
   let vozElegida = null;
   function elegirVoz() {
     const voces = speechSynthesis.getVoices();
-    vozElegida = voces.find(v => /es[-_]AR/i.test(v.lang)) || voces.find(v => /es[-_](US|419|MX)/i.test(v.lang))
+    const elegida = cfg.voz && voces.find(v => v.voiceURI === cfg.voz);
+    vozElegida = elegida || voces.find(v => /es[-_]AR/i.test(v.lang)) || voces.find(v => /es[-_](US|419|MX)/i.test(v.lang))
               || voces.find(v => /^es/i.test(v.lang)) || null;
+    // lista de voces en español para el selector
+    const sel = document.getElementById('voz');
+    if (sel) {
+      const espanol = voces.filter(v => /^es/i.test(v.lang));
+      sel.innerHTML = '<option value="">Automática (español)</option>' + espanol.map(v =>
+        `<option value="${v.voiceURI.replace(/"/g, '&quot;')}">${v.name.replace(/</g, '')} (${v.lang})</option>`).join('');
+      sel.value = elegida ? cfg.voz : '';
+    }
   }
   if ('speechSynthesis' in window) { elegirVoz(); speechSynthesis.onvoiceschanged = elegirVoz; }
 
@@ -543,6 +554,20 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   $('nomNena').addEventListener('input', e => { cfg.nomNena = e.target.value; guardar(); });
   $('tono').value = cfg.tono; $('velocidad').value = cfg.velocidad;
   $('tono').addEventListener('input', e => { cfg.tono = parseFloat(e.target.value); guardar(); });
+  $('voz').addEventListener('change', e => {
+    cfg.voz = e.target.value; guardar(); elegirVoz();
+    hablar('Hola, así suena mi voz.', 'contento');
+  });
+  // Voz de nena: tono bien agudo y un poquito más rápida, sobre la voz femenina si se encuentra
+  $('vozNena').addEventListener('click', () => {
+    const voces = ('speechSynthesis' in window) ? speechSynthesis.getVoices().filter(v => /^es/i.test(v.lang)) : [];
+    const femenina = voces.find(v => /female|mujer|femen|paulina|monica|mónica|helena|sabina|laura|lucia|lucía|elvira|dalia|camila|sofia|sofía|valentina|isabela|esc|sfb|esd/i.test(v.name + ' ' + v.voiceURI));
+    if (femenina) cfg.voz = femenina.voiceURI;
+    cfg.tono = 1.8; cfg.velocidad = 1.05;
+    $('tono').value = cfg.tono; $('velocidad').value = cfg.velocidad;
+    guardar(); elegirVoz();
+    hablar(`¡Hola! Soy ${cfg.nomRobot.trim() || 'Bipo'}. ¿Jugamos?`, 'contento');
+  });
   $('velocidad').addEventListener('input', e => { cfg.velocidad = parseFloat(e.target.value); guardar(); });
   $('probarVoz').addEventListener('click', () => hablar(`¡Hola! Soy ${cfg.nomRobot.trim() || 'Bipo'}. ¿Querés jugar conmigo?`, 'contento'));
   $('probarMic').addEventListener('click', () => { panel.classList.remove('abierto'); escuchar(); });
