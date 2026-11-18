@@ -21,7 +21,10 @@
     border:none; background:#ffffff10; color:#ffffff40; font-size:22px; z-index:4; }
   #mic { position:fixed; left:50%; bottom:12px; transform:translateX(-50%); width:64px; height:64px;
     border-radius:50%; border:2px solid #3ff0ff55; background:#3ff0ff18; color:#3ff0ffcc; font-size:28px; z-index:3; }
-  #mic.oculto { display:none; }
+  #mic.oculto, #loro.oculto { display:none; }
+  #loro { position:fixed; left:12px; bottom:12px; width:56px; height:56px; border-radius:50%;
+    border:2px solid #ffd34a55; background:#ffd34a18; font-size:26px; z-index:3; }
+  #loro.activo { background:#ffd34a40; border-color:#ffd34a; box-shadow:0 0 18px #ffd34aaa; }
   #mic.activo { background:#50ff9640; border-color:#50ff96; color:#50ff96; box-shadow:0 0 18px #50ff96aa; }
   #panel { position:fixed; right:8px; bottom:60px; top:8px; width:330px; max-width:calc(100vw - 16px);
     background:#0d161bf2; border:1px solid #234; border-radius:14px; padding:12px; display:none; z-index:4;
@@ -57,6 +60,7 @@
 </div>
 
 <button id="mic" aria-label="Hablar">🎤</button>
+<button id="loro" aria-label="Modo loro">🦜</button>
 <button id="engranaje" aria-label="Ajustes">⚙</button>
 
 <div id="panel">
@@ -96,9 +100,13 @@
   <label>Tono de voz <input id="tono" type="range" min="0.5" max="2" step="0.1"></label>
   <label>Velocidad de voz <input id="velocidad" type="range" min="0.6" max="1.4" step="0.05"></label>
   <div class="fila"><button id="probarVoz">Probar voz</button><button id="probarMic">Probar micrófono</button></div>
-  <label><input id="verMic" type="checkbox"> Mostrar botón de micrófono</label>
+  <label><input id="verMic" type="checkbox"> Mostrar botones 🎤 y 🦜</label>
+  <label><input id="repetir" type="checkbox"> En la charla, a veces repite lo que dice la nena</label>
+  <label>Voz del loro 🦜 (más a la derecha = más aguda)
+    <input id="loroTono" type="range" min="1.1" max="2" step="0.05">
+  </label>
   <div class="fila"><input id="texto" type="text" placeholder="Escribile algo para probar"><button id="enviar">Enviar</button></div>
-  <div id="estadoIA">Para charlar: tocá el 🎤 (o dejá el dedo apoyado). Queda escuchando hasta que lo toques de nuevo.</div>
+  <div id="estadoIA">Para charlar: tocá el 🎤 (o dejá el dedo apoyado). Para que repita como loro: 🦜. Se apagan tocándolos de nuevo.</div>
 
   <h4>Charla de hoy</h4>
   <div id="charla"></div>
@@ -128,7 +136,7 @@
   };
   const cfg = {
     prov:'gemini', claves:{}, modelos:{}, nomRobot:'', nomNena:'',
-    tono:1.4, velocidad:1.0, verMic:true, sens:1.6,
+    tono:1.4, velocidad:1.0, verMic:true, sens:1.6, repetir:true, loroTono:1.5,
   };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem('robot_cfg') || '{}')); } catch (e) {}
   const guardar = () => { try { localStorage.setItem('robot_cfg', JSON.stringify(cfg)); } catch (e) {} };
@@ -454,15 +462,15 @@
     return new Promise(r => setTimeout(r, n * 110 + 80));
   }
 
-  async function hablar(texto, emo = 'contento') {
-    if (cfg.bips) await bips();
+  async function hablar(texto, emo = 'contento', opts = {}) {
+    if (cfg.bips && !opts.sinBips) await bips();
     return new Promise(resolve => {
       if (!('speechSynthesis' in window)) { ponerEmocion(emo, 3000); return resolve(); }
       speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(texto);
       u.lang = vozElegida ? vozElegida.lang : 'es-AR';
       if (vozElegida) u.voice = vozElegida;
-      u.pitch = cfg.tono; u.rate = cfg.velocidad;
+      u.pitch = opts.pitch ?? cfg.tono; u.rate = opts.rate ?? cfg.velocidad;
       u.onstart = () => { hablandoAnim = true; ponerEmocion(emo, 60000); };
       const fin = () => { hablandoAnim = false; ponerEmocion(emo, 1200); resolve(); };
       u.onend = fin; u.onerror = fin;
@@ -479,6 +487,7 @@
   // Se apaga tocando el mic otra vez, o solo si nadie habla 2 veces seguidas.
   let modoCharla = false, silencios = 0;
   function activarCharla(si) {
+    if (si && modoLoro) activarLoro(false);
     modoCharla = si; silencios = 0;
     $('mic').classList.toggle('activo', si);
     if (si) escuchar();
@@ -514,6 +523,71 @@
     dedo = null; mirada.tx = 0; mirada.ty = 0;
     estado = 'escuchando'; ponerEmocion('escuchando', 15000);
     try { reconocedor.start(); } catch (err) { estado = 'libre'; ponerEmocion('normal'); }
+  }
+
+  // =====================================================================
+  // MODO LORO: graba lo que dice la nena y lo repite con voz de ardilla.
+  // El audio queda solo en el celular: no se manda a ningún lado.
+  // =====================================================================
+  let modoLoro = false, loro = null;
+  async function activarLoro(si) {
+    if (si === modoLoro) return;
+    if (!si) {
+      modoLoro = false; $('loro').classList.remove('activo');
+      if (loro) { try { loro.proc.disconnect(); loro.fuente.disconnect(); loro.stream.getTracks().forEach(t => t.stop()); } catch (e) {} }
+      loro = null; hablandoAnim = false; ponerEmocion('normal');
+      return;
+    }
+    if (modoCharla) activarCharla(false);
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    prepararAudio();
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true } });
+    } catch (e) { avisoIA('Falta permiso de micrófono para el modo loro.'); mostrarError('Falta permiso de micrófono para el modo loro'); return; }
+    modoLoro = true; $('loro').classList.add('activo');
+    const ctxA = audioCtx, sr = ctxA.sampleRate;
+    const fuente = ctxA.createMediaStreamSource(stream);
+    const proc = ctxA.createScriptProcessor(2048, 1, 1);
+    const mudo = ctxA.createGain(); mudo.gain.value = 0;
+    fuente.connect(proc); proc.connect(mudo).connect(ctxA.destination);
+    loro = { stream, fuente, proc, previo:[], trozos:null, ultimaVoz:0, inicio:0, piso:0.01, reproduciendo:false, ultimaActividad:performance.now() };
+    ponerEmocion('escuchando', 600000);
+    proc.onaudioprocess = e => {
+      if (!loro || loro.reproduciendo) return;
+      const d = new Float32Array(e.inputBuffer.getChannelData(0));
+      let suma = 0; for (let i = 0; i < d.length; i++) suma += d[i] * d[i];
+      const rms = Math.sqrt(suma / d.length), ahora = performance.now();
+      const umbral = Math.max(0.025, loro.piso * 3);
+      const hayVoz = rms > umbral;
+      if (!loro.trozos) {
+        loro.piso = loro.piso * 0.95 + rms * 0.05;           // ruido de fondo
+        loro.previo.push(d); if (loro.previo.length > 8) loro.previo.shift(); // ~0,3 s antes de que empiece a hablar
+        if (hayVoz) { loro.trozos = [...loro.previo, ]; loro.inicio = ahora; loro.ultimaVoz = ahora; }
+        else if (ahora - loro.ultimaActividad > 90000) { activarLoro(false); ponerEmocion('dormido', 2500); } // 1,5 min sin nadie: se apaga
+        return;
+      }
+      loro.trozos.push(d);
+      if (hayVoz) loro.ultimaVoz = ahora;
+      if (ahora - loro.ultimaVoz > 700 || ahora - loro.inicio > 7000) repetirLoro();
+    };
+  }
+  function repetirLoro() {
+    const trozos = loro.trozos; loro.trozos = null; loro.previo = [];
+    const largo = trozos.reduce((a, t) => a + t.length, 0);
+    if (largo / audioCtx.sampleRate < 0.5) return; // ruiditos cortos: no
+    loro.reproduciendo = true; loro.ultimaActividad = performance.now();
+    const buf = audioCtx.createBuffer(1, largo, audioCtx.sampleRate), canal = buf.getChannelData(0);
+    let pos = 0; for (const t of trozos) { canal.set(t, pos); pos += t.length; }
+    const src = audioCtx.createBufferSource(), vol = audioCtx.createGain();
+    src.buffer = buf; src.playbackRate.value = cfg.loroTono; vol.gain.value = 1.6;
+    src.connect(vol).connect(audioCtx.destination);
+    ponerEmocion(Math.random() < 0.5 ? 'risa' : 'contento', 600000); hablandoAnim = true;
+    src.onended = () => {
+      hablandoAnim = false;
+      setTimeout(() => { if (loro) { loro.reproduciendo = false; ponerEmocion('escuchando', 600000); } }, 400);
+    };
+    src.start();
   }
 
   // =====================================================================
@@ -644,8 +718,14 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
     while (historial.length > MAX_MENSAJES) historial.splice(0, 2);
     anotar('👧 ' + lo_que_dijo);
     let respuesta;
+    const pedido = preguntarIA(); pedido.catch(() => {});
+    // A veces la imita (voz finita) mientras la IA piensa la respuesta
+    if (cfg.repetir && lo_que_dijo.length <= 70 && Math.random() < 0.3) {
+      await hablar(lo_que_dijo, 'risa', { pitch:2, rate:1.15, sinBips:true });
+      ponerEmocion('pensando', 30000);
+    }
     try {
-      respuesta = await preguntarIA();
+      respuesta = await pedido;
     } catch (err) {
       historial.pop();
       const tipo = tipoDeError(err);
@@ -726,7 +806,12 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   $('probarVoz').addEventListener('click', () => hablar(`¡Hola! Soy ${cfg.nomRobot.trim() || 'Bipo'}. ¿Querés jugar conmigo?`, 'contento'));
   $('probarMic').addEventListener('click', () => { panel.classList.remove('abierto'); activarCharla(true); });
   $('verMic').checked = cfg.verMic;
-  const aplicarMic = () => $('mic').classList.toggle('oculto', !cfg.verMic);
+  const aplicarMic = () => { $('mic').classList.toggle('oculto', !cfg.verMic); $('loro').classList.toggle('oculto', !cfg.verMic); };
+  $('repetir').checked = !!cfg.repetir;
+  $('repetir').addEventListener('change', e => { cfg.repetir = e.target.checked; guardar(); });
+  $('loroTono').value = cfg.loroTono;
+  $('loroTono').addEventListener('input', e => { cfg.loroTono = parseFloat(e.target.value); guardar(); });
+  $('loro').addEventListener('click', () => activarLoro(!modoLoro));
   $('verMic').addEventListener('change', e => { cfg.verMic = e.target.checked; guardar(); aplicarMic(); });
   aplicarMic();
   $('mic').addEventListener('click', () => activarCharla(!modoCharla));
@@ -770,7 +855,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '12';
+  const VERSION = '13';
   $('version').textContent = 'Versión ' + VERSION;
   let hayNueva = false;
   async function buscarVersion() {
@@ -780,7 +865,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
       if (v && v !== VERSION) { hayNueva = true; $('version').textContent = `Versión ${VERSION} · hay una nueva (${v}) ✨`; }
     } catch (e) {}
   }
-  const tranquilo = () => estado === 'libre' && !modoCharla && !hablandoAnim &&
+  const tranquilo = () => estado === 'libre' && !modoCharla && !modoLoro && !hablandoAnim &&
     !(('speechSynthesis' in window) && speechSynthesis.speaking) && !panel.classList.contains('abierto') && !inicioToque;
   setInterval(buscarVersion, 2 * 60 * 1000);
   setTimeout(buscarVersion, 15000);
