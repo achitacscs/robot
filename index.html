@@ -39,6 +39,8 @@
     width:100%; box-sizing:border-box; background:#08242c; color:#dff; border:1px solid #2a4a55;
     border-radius:8px; padding:8px; font-size:15px; margin-top:3px; }
   #panel input[type=range] { width:100%; }
+  #panel textarea { width:100%; box-sizing:border-box; background:#08242c; color:#dff; border:1px solid #2a4a55;
+    border-radius:8px; padding:8px; font-size:15px; margin-top:3px; min-height:90px; font-family:inherit; }
   .nota { font-size:12px; color:#f5c66a; margin-top:4px; }
   .fila { display:flex; gap:6px; margin-top:8px; }
   .fila input { flex:1; }
@@ -109,6 +111,15 @@
   <div class="fila"><input id="texto" type="text" placeholder="Escribile algo para probar"><button id="enviar">Enviar</button></div>
   <div id="estadoIA">Para charlar: tocá el 🎤 (o dejá el dedo apoyado). Para que repita como loro: 🦜. Se apagan tocándolos de nuevo.</div>
 
+  <h4>Enseñanzas y mensajes</h4>
+  <label>Cosas que querés que le enseñe (una por renglón). Las va a ir metiendo en la charla, jugando:
+    <textarea id="ensenanzas" placeholder="Juntar los juguetes después de jugar&#10;Lavarse los dientes antes de dormir&#10;Decir por favor y gracias"></textarea>
+  </label>
+  <label>Mensaje para decirle ahora:
+    <input id="mensaje" type="text" placeholder="Ej: es hora de juntar los juguetes">
+  </label>
+  <div class="fila"><button id="decirTal" style="flex:1">🗣️ Decirlo tal cual</button><button id="decirIA" style="flex:1">✨ A su manera</button></div>
+
   <h4>Charla de hoy</h4>
   <div id="charla"></div>
   <div class="fila"><button id="borrar">Borrar charla</button></div>
@@ -137,7 +148,7 @@
   };
   const cfg = {
     prov:'gemini', claves:{}, modelos:{}, nomRobot:'', nomNena:'',
-    tono:1.4, velocidad:1.0, verMic:true, sens:1.6, repetir:true, loroTono:1.5,
+    tono:1.4, velocidad:1.0, verMic:true, sens:1.6, repetir:true, loroTono:1.5, ensenanzas:'',
   };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem('robot_cfg') || '{}')); } catch (e) {}
   const guardar = () => { try { localStorage.setItem('robot_cfg', JSON.stringify(cfg)); } catch (e) {} };
@@ -697,6 +708,11 @@ Reglas de cuidado (muy importantes):
 - No digas que sos una persona ni que estás vivo de verdad: sos un robot de juguete, aunque podés ser su amigo de juegos.
 - Si no sabés algo, decí que no sabés; no inventes.
 
+${(cfg.ensenanzas || '').trim() ? `Cosas buenas que los papás te pidieron que le enseñes (sacalas de vez en cuando en la charla, no en cada respuesta; siempre de forma divertida y cariñosa, como un juego, un desafío o una canción, nunca retándola; si la nena cuenta que lo hizo, festejalo mucho):
+${cfg.ensenanzas.trim().split('\n').filter(l => l.trim()).map(l => '- ' + l.trim()).join('\n')}
+
+` : ''}Si un mensaje empieza con "[Mensaje de los papás]", no lo dijo la nena: es algo que los papás quieren que le digas ahora. Decíselo vos, con tus palabras, de forma cariñosa y divertida (por ejemplo, como una misión o un juego), en una o dos frases.
+
 Formato: empezá SIEMPRE con una etiqueta de emoción entre corchetes y después el texto. Etiquetas: [contento] [risa] [sorpresa] [pensando] [triste] [llanto] [miedo] [enojado] [normal]. Usá [llanto], [enojado] y [miedo] solo jugando, en broma (por ejemplo, llorar de mentirita en un cuento).
 Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   }
@@ -792,17 +808,18 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
     return { emo, texto };
   }
 
-  async function conversar(lo_que_dijo) {
+  async function conversar(lo_que_dijo, dePapas = false) {
     lo_que_dijo = (lo_que_dijo || '').trim();
     if (!lo_que_dijo) { estado = 'libre'; return; }
+    if (dePapas) lo_que_dijo = '[Mensaje de los papás] ' + lo_que_dijo;
     estado = 'pensando'; ponerEmocion('pensando', 30000);
     historial.push({ role:'user', content:lo_que_dijo });
     while (historial.length > MAX_MENSAJES) historial.splice(0, 2);
-    anotar('👧 ' + lo_que_dijo);
+    anotar((dePapas ? '👨 ' : '👧 ') + lo_que_dijo.replace('[Mensaje de los papás] ', ''));
     let respuesta;
     const pedido = preguntarIA(); pedido.catch(() => {});
     // A veces la imita (voz finita) mientras la IA piensa la respuesta
-    if (cfg.repetir && lo_que_dijo.length <= 70 && Math.random() < 0.3) {
+    if (!dePapas && cfg.repetir && lo_que_dijo.length <= 70 && Math.random() < 0.3) {
       await hablar(lo_que_dijo, 'risa', { pitch:2, rate:1.15, sinBips:true });
       ponerEmocion('pensando', 30000);
     }
@@ -906,6 +923,20 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
     if (estado === 'libre') conversar(t);
   });
   $('texto').addEventListener('keydown', e => { if (e.key === 'Enter') $('enviar').click(); });
+  $('ensenanzas').value = cfg.ensenanzas || '';
+  $('ensenanzas').addEventListener('input', e => { cfg.ensenanzas = e.target.value; guardar(); });
+  function enviarMensaje(aSuManera) {
+    const txt = $('mensaje').value.trim(); if (!txt) return;
+    $('mensaje').value = '';
+    panel.classList.remove('abierto');
+    if (modoLoro) activarLoro(false);
+    try { reconocedor && reconocedor.abort(); } catch (e) {}
+    estado = 'libre';
+    if (aSuManera) conversar(txt, true);
+    else { anotar('👨 (tal cual) ' + txt); estado = 'pensando'; hablar(txt, 'contento').then(() => { estado = 'libre'; seguirCharla(); }); }
+  }
+  $('decirTal').addEventListener('click', () => enviarMensaje(false));
+  $('decirIA').addEventListener('click', () => enviarMensaje(true));
   $('borrar').addEventListener('click', () => { historial = []; $('charla').textContent = ''; });
   mostrarProveedor();
 
@@ -941,7 +972,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '17';
+  const VERSION = '18';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
