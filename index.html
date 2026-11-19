@@ -24,6 +24,10 @@
   #mic.oculto, #loro.oculto { display:none; }
   #cerrarMusica { position:fixed; z-index:4; display:none; right:62px; bottom:8px; width:44px; height:44px; border-radius:50%; border:none;
     background:#ffffff14; color:#ffffff60; font-size:20px; }
+  #musica { position:fixed; left:50%; bottom:86px; transform:translateX(-50%); width:min(70vw, 60vh); aspect-ratio:16/9;
+    border:3px solid #46c3ff88; border-radius:14px; overflow:hidden; background:#000; z-index:3; display:none; }
+  #musica.visible { display:block; }
+  #musica iframe { width:100%; height:100%; border:0; }
   .cancion { display:flex; align-items:center; gap:6px; margin-top:6px; font-size:14px; }
   .cancion span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .cancion button { padding:6px 10px !important; }
@@ -66,6 +70,7 @@
   <small>(se pone en pantalla completa)</small>
 </div>
 
+<div id="musica"><div id="ytPlayer"></div></div>
 <button id="cerrarMusica" aria-label="Parar música">⏹</button>
 <video id="camVideo" playsinline muted style="position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.01;pointer-events:none"></video>
 <div id="camLuz" style="position:fixed;top:8px;right:10px;width:10px;height:10px;border-radius:50%;background:#50ff96;box-shadow:0 0 8px #50ff96;display:none;z-index:4" title="Cámara encendida"></div>
@@ -137,6 +142,11 @@
   <div style="font-size:13px">Subí canciones (mp3 u otro audio) desde este celular. Quedan guardadas acá, en el robot, y suenan sin video. Poné un nombre claro (ej: "A guardar") para que el robot sepa cuándo usarla.</div>
   <label><input id="subirCancion" type="file" accept="audio/*" multiple style="margin-top:6px"></label>
   <div id="listaCanciones"></div>
+  <label style="margin-top:12px"><input id="youtube" type="checkbox"> Buscar en YouTube las canciones que pida (se ve el video)</label>
+  <label>Clave de YouTube (Google Cloud → YouTube Data API v3)
+    <input id="ytClave" type="password" autocomplete="off" placeholder="AIza...">
+  </label>
+  <div class="fila"><input id="ytPrueba" type="text" placeholder="Probar: ej. el sapo pepe"><button id="ytBuscar">🔎</button></div>
   <div class="fila"><button id="pararMusica" style="flex:1">⏹ Parar música</button></div>
 
   <h4>Charla de hoy</h4>
@@ -175,15 +185,17 @@
   };
   const cfg = {
     prov:'gemini', claves:{}, modelos:{}, nomRobot:'', nomNena:'',
-    tono:1.4, velocidad:1.0, orientacion:'vertical', fuerza:4.5, movOn:true, verMic:true, sens:1.6, repetir:true, loroTono:1.5, ensenanzas:'', camara:false,
+    tono:1.4, velocidad:1.0, orientacion:'vertical', fuerza:4.5, movOn:true, verMic:true, sens:1.6, repetir:true, loroTono:1.5, ensenanzas:'', camara:false, youtube:false, ytClave:'',
   };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem('robot_cfg') || '{}')); } catch (e) {}
   const guardar = () => { try { localStorage.setItem('robot_cfg', JSON.stringify(cfg)); } catch (e) {} };
   // Link de configuración: .../robot/#clave=XXXX guarda la clave en este celular y la borra de la dirección.
   // (lo que va después de # no viaja a ningún servidor ni queda en el código publicado)
   (() => {
+    const y = /[#&]youtube=([A-Za-z0-9_\-]+)/.exec(location.hash);
+    if (y) { cfg.ytClave = y[1]; cfg.youtube = true; guardar(); }
     const m = /^#clave=([A-Za-z0-9_\-]+)/.exec(location.hash);
-    if (!m) return;
+    if (!m) { if (y) history.replaceState(null, '', location.pathname); return; }
     cfg.claves = cfg.claves || {}; cfg.claves.gemini = m[1]; cfg.prov = 'gemini';
     if (cfg.modelos) delete cfg.modelos.gemini;
     guardar();
@@ -267,6 +279,7 @@
       ctx.fill();
     }
   }
+  const videoVisible = () => document.getElementById('musica').classList.contains('visible');
   // =====================================================================
   // DIBUJITOS que aparecen en la pantalla según lo que hace
   // =====================================================================
@@ -454,11 +467,11 @@
 
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
     const vertical = H > W;
-    const base = (vertical ? Math.min(W * 0.3, H * 0.35) : Math.min(W * 0.24, H * 0.5)) * escala;
+    const base = (vertical ? Math.min(W * 0.3, H * 0.35) : Math.min(W * 0.24, H * 0.5)) * escala * (bailando && videoVisible() && !vertical ? 0.6 : 1);
     const sep = vertical ? W * 0.24 : Math.min(W * 0.19, base * 1.05);
     const ox = mirada.x * W * 0.1 + (bailando ? Math.sin(t * 4) * base * 0.12 : 0);
     const oy = mirada.y * H * 0.12 + (emocion === 'llanto' ? Math.abs(Math.sin(t * 7)) * base * 0.05 : 0) // sollozo
-      - (bailando ? Math.abs(Math.sin(t * 8)) * base * 0.1 : 0); // baile (y sube para dejar lugar al video)
+      - (bailando ? Math.abs(Math.sin(t * 8)) * base * 0.1 + (videoVisible() ? base * 0.45 : 0) : 0); // baile (sube si hay video) (y sube para dejar lugar al video)
     const tx = (Math.random() * 2 - 1) * (forma.tiembla + vibra), ty = (Math.random() * 2 - 1) * (forma.tiembla + vibra);
     if (emocion === 'sorpresa') {
       caraSorpresa(W / 2 + ox + tx, H / 2 + oy + ty, base, t);
@@ -915,8 +928,63 @@
     anotar('🎵 ' + reg.nombre);
     try { await audio.play(); } catch (e) { terminarMusica(false); mostrarError('No se pudo reproducir: ' + e.message); }
   }
+  // ---- YouTube (opcional): busca la canción y la pone con el video ----
+  let yt = null, ytListo = null;
+  function cargarYT() {
+    if (ytListo) return ytListo;
+    ytListo = new Promise(res => {
+      window.onYouTubeIframeAPIReady = res;
+      const sc = document.createElement('script'); sc.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(sc);
+    });
+    return ytListo;
+  }
+  async function buscarYouTube(busqueda) {
+    const clave = (cfg.ytClave || '').trim();
+    if (!clave) throw new Error('Falta la clave de YouTube en el engranaje');
+    const q = /infantil|niñ|chicos|kids|jard[ií]n/i.test(busqueda) ? busqueda : busqueda + ' canción infantil';
+    const url = 'https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=5&safeSearch=strict&videoEmbeddable=true&relevanceLanguage=es&regionCode=AR&q='
+      + encodeURIComponent(q) + '&key=' + encodeURIComponent(clave);
+    const d = await pedir(url, { method:'GET' });
+    const items = (d.items || []).filter(i => i.id && i.id.videoId);
+    if (!items.length) throw new Error('No encontré esa canción');
+    return items.map(i => ({ id:i.id.videoId, titulo:(i.snippet && i.snippet.title || '').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&') }));
+  }
+  async function ponerYouTube(busqueda) {
+    let res;
+    try { res = await buscarYouTube(busqueda); }
+    catch (e) {
+      const txt = /403|denied|not been used|disabled/i.test(e.message) ? 'La clave de YouTube no tiene activada la "YouTube Data API v3".' : e.message;
+      mostrarError('YouTube: ' + txt); anotar('⚠ YouTube: ' + txt);
+      await hablar('Uy, no pude encontrar esa canción.', 'triste'); seguirCharla(); return;
+    }
+    if (modoCharla) { charlaPausada = true; activarCharla(false); }
+    if (modoLoro) activarLoro(false);
+    let idx = 0;
+    $('musica').classList.add('visible'); $('cerrarMusica').style.display = 'block';
+    bailando = true; ponerEmocion('contento', 3600000);
+    anotar('🎵 YouTube: ' + res[0].titulo);
+    await cargarYT();
+    if (yt) { yt.loadVideoById(res[0].id); yt.__lista = res; yt.__idx = 0; return; }
+    yt = new YT.Player('ytPlayer', {
+      host:'https://www.youtube-nocookie.com', videoId:res[0].id,
+      playerVars:{ autoplay:1, playsinline:1, rel:0, modestbranding:1, fs:0 },
+      events:{
+        onReady: e => e.target.playVideo(),
+        onStateChange: e => { if (e.data === YT.PlayerState.ENDED) terminarMusica(true); },
+        onError: () => { // si ese video no se puede poner, prueba el siguiente resultado
+          const l = yt.__lista || []; yt.__idx = (yt.__idx || 0) + 1;
+          if (yt.__idx < l.length) { anotar('🎵 YouTube: ' + l[yt.__idx].titulo); yt.loadVideoById(l[yt.__idx].id); }
+          else { terminarMusica(false); mostrarError('No se pudo poner la canción'); }
+        },
+      },
+    });
+    yt.__lista = res; yt.__idx = 0;
+  }
+
   function terminarMusica(festejar) {
     try { audio.pause(); } catch (e) {}
+    try { yt && yt.stopVideo && yt.stopVideo(); } catch (e) {}
+    $('musica').classList.remove('visible');
     $('cerrarMusica').style.display = 'none';
     bailando = false; ponerEmocion('normal');
     const reanudar = () => { if (charlaPausada) { charlaPausada = false; activarCharla(true); } };
@@ -957,6 +1025,8 @@ ${cfg.ensenanzas.trim().split('\n').filter(l => l.trim()).map(l => '- ' + l.trim
 ` : ''}${listaCanciones().length ? `Canciones que podés poner en el robot:
 ${listaCanciones().map((c, i) => `${i + 1}. ${c.nombre}`).join('\n')}
 Para poner una, terminá tu respuesta con la etiqueta [cancion:NÚMERO], por ejemplo [cancion:1]. Ponela cuando sea hora de juntar los juguetes o cuando la nena pida esa canción. No pongas música todo el tiempo.
+
+` : ''}${cfg.youtube && cfg.ytClave ? `Podés buscar canciones infantiles en YouTube: si la nena te pide una canción (que no esté en la lista de arriba), contestale cortito y terminá con la etiqueta [youtube:NOMBRE DE LA CANCIÓN], por ejemplo [youtube:el sapo pepe]. Solo canciones infantiles apropiadas para una nena de 4 años; si pide algo que no es para chicos, proponé otra canción infantil.
 
 ` : ''}${(cfg.camara) ? `Tenés una cámara: si para contestar necesitás VER algo (cuántos dedos muestra, qué tiene en la mano, de qué color es algo, etc.) y no recibiste foto, respondé SOLO con la etiqueta [foto] y nada más; el robot va a sacar una foto y te la va a mandar.
 ` : ''}A veces, junto con lo que dice la nena, vas a recibir una foto de lo que ve tu cámara (por ejemplo, cuando te muestra un juguete). Contale lo que ves con palabras simples y alegres, y preguntale algo sobre eso. Si en la foto aparecen personas, no describas su cuerpo ni su cara: concentrate en el objeto o en lo que te quiere mostrar. Si te pregunta cuántos dedos muestra, contalos con cuidado. Si de verdad no se ve, pedile que lo ponga frente a la pantalla, un poquito más lejos y con luz.
@@ -1058,9 +1128,11 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
     const emo = (m && EMOCIONES_IA[m[1].toLowerCase()]) || 'contento';
     const mc = /\[canci[oó]n:\s*(\d+)\s*\]/i.exec(respuesta);
     const cancion = mc ? parseInt(mc[1], 10) - 1 : -1;
+    const my = /\[youtube:\s*([^\]]+)\]/i.exec(respuesta);
+    const youtube = my ? my[1].trim() : '';
     const texto = respuesta.replace(/\[[^\]]*\]/g, '').replace(/[*_#~`>]/g, '')
       .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '').replace(/\s+/g, ' ').trim();
-    return { emo, texto, cancion };
+    return { emo, texto, cancion, youtube };
   }
 
   async function conversar(lo_que_dijo, dePapas = false) {
@@ -1101,13 +1173,14 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
       seguirCharla();
       return;
     }
-    const { emo, texto, cancion } = separar(respuesta);
+    const { emo, texto, cancion, youtube } = separar(respuesta);
     if (!texto) { historial.pop(); estado = 'libre'; await hablar('Mmm, me olvidé lo que iba a decir.', 'pensando'); seguirCharla(); return; }
     historial.push({ role:'assistant', content:respuesta.trim() });
     anotar('🤖 ' + texto);
     estado = 'libre';
     await hablar(texto, emo);
     if (cancion >= 0) { ponerMusica(cancion); return; }
+    if (youtube && cfg.youtube) { ponerYouTube(youtube); return; }
     seguirCharla();
   }
 
@@ -1191,6 +1264,11 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   });
   $('texto').addEventListener('keydown', e => { if (e.key === 'Enter') $('enviar').click(); });
   $('pararMusica').addEventListener('click', () => terminarMusica(false));
+  $('youtube').checked = !!cfg.youtube;
+  $('youtube').addEventListener('change', e => { cfg.youtube = e.target.checked; guardar(); });
+  $('ytClave').value = cfg.ytClave || '';
+  $('ytClave').addEventListener('input', e => { cfg.ytClave = e.target.value.trim(); guardar(); });
+  $('ytBuscar').addEventListener('click', () => { const q = $('ytPrueba').value.trim(); if (!q) return; panel.classList.remove('abierto'); ponerYouTube(q); });
   $('camara').checked = !!cfg.camara;
   $('camara').addEventListener('change', async e => {
     cfg.camara = e.target.checked; guardar();
@@ -1256,7 +1334,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '24';
+  const VERSION = '25';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
