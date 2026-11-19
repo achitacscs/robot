@@ -13,7 +13,8 @@
   html, body { margin:0; height:100%; background:#000; overflow:hidden; touch-action:none;
     -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent;
     font-family: system-ui, sans-serif; }
-  canvas { display:block; width:100vw; height:100vh; }
+  canvas { display:block; width:100vw; height:100vh; transition:opacity 1.5s; }
+  canvas.dormido { opacity:0.35; }
   #inicio { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center;
     justify-content:center; color:#3ff0ff; font-size:22px; gap:10px; background:#000; z-index:5; text-align:center; }
   #inicio small { color:#4a7d85; font-size:14px; }
@@ -244,6 +245,7 @@
   let parpadeo = -1, proxParpadeo = 0, hablandoAnim = false, dedo = null;
   // nivelVoz: 0..1, sube cuando la nena habla (los ojos vibran más fuerte)
   let nivelVoz = 0, nenaHablando = false, bailando = false;
+  let durmiendo = false; // 'dormido' (se despierta con su nombre o tocándolo) o 'apagado' (solo tocándolo)
 
   function ponerEmocion(nombre, ms = 2500) {
     if (!(nombre in BASE) && !ESPECIALES.includes(nombre)) return;
@@ -509,7 +511,7 @@
     recorrido = 0; cosquillas = false; largo = false; dedo = { x:e.clientX, y:e.clientY };
     clearTimeout(timerLargo);
     // dedo apoyado quieto ~0,7 s -> escuchar
-    timerLargo = setTimeout(() => { if (inicioToque && recorrido < 25) { largo = true; if (!modoCharla) activarCharla(true); } }, 700);
+    timerLargo = setTimeout(() => { if (inicioToque && recorrido < 25 && !durmiendo) { largo = true; if (!modoCharla) activarCharla(true); } }, 700);
   });
   cv.addEventListener('pointermove', e => {
     if (!inicioToque) return;
@@ -521,6 +523,7 @@
   function soltar() {
     clearTimeout(timerLargo);
     if (!inicioToque) return;
+    if (durmiendo) { inicioToque = null; dedo = null; if (!largo) despertarse(); return; }
     const dur = performance.now() - inicioToque.t;
     if (!largo && !cosquillas && recorrido < 25 && dur < 400 && estado === 'libre') {
       const ahora = performance.now();
@@ -551,6 +554,7 @@
   };
   let ultimaFrase = 0, fraseAnterior = '';
   function decirFrase(tipo) {
+    if (durmiendo) return;
     const ahora = performance.now();
     if (ahora - ultimaFrase < 2500 || estado !== 'libre' || modoCharla || modoLoro) return;
     if ('speechSynthesis' in window && speechSynthesis.speaking) return;
@@ -608,7 +612,7 @@
     const ahora = performance.now();
     // la cámara de adelante ve "espejado": si la nena está a la izquierda de la pantalla, los ojos miran a la izquierda
     cam.cara = { x:Math.max(-1, Math.min(1, -(nx * 2 - 1) * 1.2)), y:Math.max(-0.8, Math.min(0.8, (ny * 2 - 1) * 0.9)), t:ahora };
-    if (ahora - cam.ultimaVista > 60000 && estado === 'libre' && emocion === 'normal') { ponerEmocion('contento', 2500); decirFrase('saludo'); }
+    if (!durmiendo && ahora - cam.ultimaVista > 60000 && estado === 'libre' && emocion === 'normal') { ponerEmocion('contento', 2500); decirFrase('saludo'); }
     cam.ultimaVista = ahora;
   }
   // Saca una foto chica (para mandarle a la IA). No se guarda.
@@ -644,7 +648,7 @@
     const umbral = cfg.fuerza || 4.5;
     barra.style.width = Math.min(100, actividad / 10 * 100) + '%';
     marca.style.left = Math.min(100, umbral / 10 * 100) + '%';
-    if (cfg.movOn === false || ahora < pausaSensor || estado === 'escuchando') return;
+    if (cfg.movOn === false || durmiendo || ahora < pausaSensor || estado === 'escuchando') return;
     tiempoCaida = mag < 2.5 ? tiempoCaida + dt : 0;
     if (tiempoCaida > 90) { ponerEmocion('miedo', 2500); decirFrase('miedo'); pausaSensor = ahora + 2600; tiempoCaida = 0; return; }
     tiempoAlto = actividad > umbral ? tiempoAlto + dt : Math.max(0, tiempoAlto - dt);
@@ -819,7 +823,7 @@
   }
   function esperarNombre() {
     clearTimeout(timerEspera);
-    if (!cfg.despertar) return;
+    if (!cfg.despertar || durmiendo === 'apagado') return;
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return;
     if (modoCharla || modoLoro || bailando || estado !== 'libre' || document.hidden || hablandoAnim) { timerEspera = setTimeout(esperarNombre, 1500); return; }
@@ -829,12 +833,15 @@
     recEspera.onresult = e => {
       if (llamado) return;
       for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (durmiendo && e.results[i].isFinal && CMD.despertar.test(e.results[i][0].transcript)) { llamado = true; try { recEspera.abort(); } catch (_) {} despertarse(); return; }
         const resto = buscarNombre(e.results[i][0].transcript);
         if (resto === null) continue;
         if (!e.results[i].isFinal && resto === '') continue; // esperar a ver si dice algo más
         llamado = true;
         try { recEspera.abort(); } catch (_) {}
         anotar('👂 Me llamaron');
+        if (durmiendo) { despertarse(); return; }
+        if (comando(resto)) return;
         if (resto.trim().length > 2) { // "Emo, ¿qué es esto?" -> contesta directo y queda charlando
           modoCharla = true; silencios = 0; $('mic').classList.add('activo'); conversar(resto);
         } else {
@@ -1064,6 +1071,46 @@
   cargarCanciones();
 
   // =====================================================================
+  // COMANDOS DE VOZ: se cumplen al instante, sin preguntarle a la IA
+  // =====================================================================
+  const CMD = {
+    apagar:   /\b(apag[aá]te|apagate|apagar(te)?|desconect[aá]te|chau robot)\b/i,
+    dormir:   /\b(dorm[ií]te|a dormir|and[aá] a dormir|vamos a dormir|a la cama|hora de dormir|nana)\b/i,
+    despertar:/\b(despert[aá]te|despertar|arriba|levant[aá]te|buen d[ií]a)\b/i,
+    callar:   /\b(callate|c[aá]llate|silencio|shh+)\b/i,
+    musica:   /\b(par[aá] la m[uú]sica|sac[aá] la m[uú]sica|basta de m[uú]sica|apag[aá] la m[uú]sica|cort[aá] la (m[uú]sica|canci[oó]n))\b/i,
+  };
+  // devuelve true si era un comando (y ya lo hizo)
+  function comando(texto) {
+    if (CMD.musica.test(texto) && bailando) { terminarMusica(false); hablar('¡Listo! Paré la música.', 'contento'); return true; }
+    if (CMD.apagar.test(texto)) { irADormir('apagado'); return true; }
+    if (CMD.dormir.test(texto)) { irADormir('dormido'); return true; }
+    if (CMD.callar.test(texto)) { if ('speechSynthesis' in window) speechSynthesis.cancel(); hablandoAnim = false; ponerEmocion('contento', 1500); return true; }
+    if (durmiendo && CMD.despertar.test(texto)) { despertarse(); return true; }
+    return false;
+  }
+  function irADormir(tipo) {
+    if (bailando) terminarMusica(false);
+    if (modoLoro) activarLoro(false);
+    const frase = tipo === 'apagado' ? 'Bueno, me apago. ¡Chau, chau!' : '¡Ahhh, qué sueño! Buenas noches… ';
+    modoCharla = false; silencios = 0; $('mic').classList.remove('activo');
+    try { reconocedor && reconocedor.abort(); } catch (e) {}
+    estado = 'pensando';
+    hablar(frase, 'dormido', { sinBips:true }).then(() => {
+      estado = 'libre'; durmiendo = tipo; cv.classList.add('dormido');
+      ponerEmocion('dormido', 24 * 3600 * 1000);
+      anotar(tipo === 'apagado' ? '💤 Se apagó (tocalo para prenderlo)' : '💤 Se durmió (llamalo o tocalo para despertarlo)');
+      if (tipo === 'apagado') pararEspera();
+    });
+  }
+  function despertarse() {
+    if (!durmiendo) return;
+    durmiendo = false; cv.classList.remove('dormido');
+    ponerEmocion('sorpresa', 900);
+    setTimeout(() => hablar(['¡Buen día! ¿Jugamos?', '¡Ya me desperté!', '¡Hola! Dormí re bien.'][Math.floor(Math.random() * 3)], 'contento'), 900);
+  }
+
+  // =====================================================================
   // CEREBRO: la IA
   // =====================================================================
   let historial = [];
@@ -1101,6 +1148,8 @@ Para poner una, terminá tu respuesta con la etiqueta [cancion:NÚMERO], por eje
 ` : ''}A veces, junto con lo que dice la nena, vas a recibir una foto de lo que ve tu cámara (por ejemplo, cuando te muestra un juguete). Contale lo que ves con palabras simples y alegres, y preguntale algo sobre eso. Si en la foto aparecen personas, no describas su cuerpo ni su cara: concentrate en el objeto o en lo que te quiere mostrar. Si te pregunta cuántos dedos muestra, contalos con cuidado. Si de verdad no se ve, pedile que lo ponga frente a la pantalla, un poquito más lejos y con luz.
 
 Si un mensaje empieza con "[Mensaje de los papás]", no lo dijo la nena: es algo que los papás quieren que le digas ahora. Decíselo vos, con tus palabras, de forma cariñosa y divertida (por ejemplo, como una misión o un juego), en una o dos frases.
+
+Si te piden canciones para dormir o una canción que no tenés (y no podés buscar en YouTube), podés cantar vos una canción cortita inventada, con tus palabras.
 
 Formato: empezá SIEMPRE con una etiqueta de emoción entre corchetes y después el texto. Etiquetas: [contento] [risa] [sorpresa] [pensando] [triste] [llanto] [miedo] [enojado] [normal]. Usá [llanto], [enojado] y [miedo] solo jugando, en broma (por ejemplo, llorar de mentirita en un cuento).
 Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
@@ -1207,6 +1256,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   async function conversar(lo_que_dijo, dePapas = false) {
     lo_que_dijo = (lo_que_dijo || '').trim();
     if (!lo_que_dijo) { estado = 'libre'; return; }
+    if (!dePapas && comando(lo_que_dijo)) { anotar('👧 ' + lo_que_dijo + '  (comando)'); return; }
     if (dePapas) lo_que_dijo = '[Mensaje de los papás] ' + lo_que_dijo;
     estado = 'pensando'; ponerEmocion('pensando', 30000);
     historial.push({ role:'user', content:lo_que_dijo });
@@ -1334,7 +1384,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   $('loro').addEventListener('click', () => activarLoro(!modoLoro));
   $('verMic').addEventListener('change', e => { cfg.verMic = e.target.checked; guardar(); aplicarMic(); });
   aplicarMic();
-  $('mic').addEventListener('click', () => activarCharla(!modoCharla));
+  $('mic').addEventListener('click', () => { if (durmiendo) { despertarse(); return; } activarCharla(!modoCharla); });
   $('enviar').addEventListener('click', () => {
     const t = $('texto').value; $('texto').value = '';
     if (estado === 'libre') conversar(t);
@@ -1411,7 +1461,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '26';
+  const VERSION = '27';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
@@ -1428,7 +1478,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
       if (v && v !== VERSION) { hayNueva = true; $('version').textContent = `Versión ${VERSION} · hay una nueva (${v}) ✨`; }
     } catch (e) {}
   }
-  const tranquilo = () => estado === 'libre' && !modoCharla && !modoLoro && !bailando && !hablandoAnim &&
+  const tranquilo = () => estado === 'libre' && !durmiendo && !modoCharla && !modoLoro && !bailando && !hablandoAnim &&
     !(('speechSynthesis' in window) && speechSynthesis.speaking) && !panel.classList.contains('abierto') && !inicioToque;
   setInterval(buscarVersion, 2 * 60 * 1000);
   setTimeout(buscarVersion, 15000);
