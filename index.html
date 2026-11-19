@@ -67,6 +67,8 @@
 </div>
 
 <button id="cerrarMusica" aria-label="Parar música">⏹</button>
+<video id="camVideo" playsinline muted style="position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.01;pointer-events:none"></video>
+<div id="camLuz" style="position:fixed;top:8px;right:10px;width:10px;height:10px;border-radius:50%;background:#50ff96;box-shadow:0 0 8px #50ff96;display:none;z-index:4" title="Cámara encendida"></div>
 <button id="mic" aria-label="Hablar">🎤</button>
 <button id="loro" aria-label="Modo loro">🦜</button>
 <button id="engranaje" aria-label="Ajustes">⚙</button>
@@ -126,6 +128,11 @@
   </label>
   <div class="fila"><button id="decirTal" style="flex:1">🗣️ Decirlo tal cual</button><button id="decirIA" style="flex:1">✨ A su manera</button></div>
 
+  <h4>Cámara 📷</h4>
+  <label><input id="camara" type="checkbox"> Usar la cámara de adelante</label>
+  <div style="font-size:12px;color:#9bc;margin-top:4px">Con la cámara prendida, los ojos siguen la cara de la nena (eso se procesa en el celular, no se manda nada). Cuando ella pregunta "¿qué es esto?" o "mirá", saca UNA foto y se la manda a la IA para contestar. Las fotos no se guardan.</div>
+  <div id="estadoCam" style="font-size:12px;color:#7aa;margin-top:4px"></div>
+
   <h4>Música 🎵</h4>
   <div style="font-size:13px">Subí canciones (mp3 u otro audio) desde este celular. Quedan guardadas acá, en el robot, y suenan sin video. Poné un nombre claro (ej: "A guardar") para que el robot sepa cuándo usarla.</div>
   <label><input id="subirCancion" type="file" accept="audio/*" multiple style="margin-top:6px"></label>
@@ -160,7 +167,7 @@
   };
   const cfg = {
     prov:'gemini', claves:{}, modelos:{}, nomRobot:'', nomNena:'',
-    tono:1.4, velocidad:1.0, verMic:true, sens:1.6, repetir:true, loroTono:1.5, ensenanzas:'',
+    tono:1.4, velocidad:1.0, verMic:true, sens:1.6, repetir:true, loroTono:1.5, ensenanzas:'', camara:false,
   };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem('robot_cfg') || '{}')); } catch (e) {}
   const guardar = () => { try { localStorage.setItem('robot_cfg', JSON.stringify(cfg)); } catch (e) {} };
@@ -404,7 +411,10 @@
     for (const k of CLAVES_FORMA) forma[k] = lerp(forma[k], obj[k] ?? 0, 0.18);
     for (let i = 0; i < 3; i++) forma.color[i] = lerp(forma.color[i], colorObj[i], 0.15);
 
-    if (dedo) {
+    const caraReciente = cam.cara && ahora - cam.cara.t < 1200 && ['normal','contento','escuchando','risa'].includes(emocion);
+    if (!dedo && caraReciente) {
+      mirada.tx = cam.cara.x; mirada.ty = cam.cara.y; proxMirada = ahora + 1500;
+    } else if (dedo) {
       mirada.tx = Math.max(-1, Math.min(1, (dedo.x - W / 2) / (W / 2))) || 0;
       mirada.ty = Math.max(-1, Math.min(1, (dedo.y - H / 2) / (H / 2))) || 0;
     } else if (emocion === 'normal' && ahora > proxMirada) {
@@ -510,6 +520,7 @@
     enojado: ['¡No me pegues, che!', '¡Me estás haciendo enojar!', '¡Ey! ¡Que soy un robot sensible!', '¡Basta, que se me desatornillan los ojos!', '¡Uf! Me salen chispitas de la bronca.'],
     llanto:  ['¡Buaaa! ¡Me pegaste!', 'Buaaa… ahora estoy triste. ¿Me das un abrazo?', '¡Buaaa! Los robots también tenemos sentimientos.'],
     mareado: ['¡Uy, qué mareo! Todo me da vueltas.', '¡Wiii! ¿Otra vez? No, mejor no.', '¡Ay, me mareé! ¿Dónde estoy?'],
+    saludo:  ['¡Hola! ¡Te veo!', '¡Holaaa! ¡Qué lindo verte!', '¡Ahí estás! Te estaba esperando.', '¡Hola, amiga! ¿Jugamos?'],
     miedo:   ['¡Aaah! ¡Cuidado que me caigo!', '¡Uy! ¡Qué susto!', '¡Agarrame fuerte, por favor!'],
   };
   let ultimaFrase = 0, fraseAnterior = '';
@@ -522,6 +533,69 @@
     fraseAnterior = f; ultimaFrase = ahora;
     const emo = emocion;
     hablar(f, emo, { sinBips:true }).then(() => { if (emocion === emo) ponerEmocion(emo, 800); });
+  }
+
+  // =====================================================================
+  // CÁMARA: los ojos siguen la cara (en el celular) y foto para "¿qué es esto?"
+  // =====================================================================
+  const cam = { on:false, stream:null, detector:null, timer:0, cara:null, ultimaVista:0 };
+  const camVideo = document.getElementById('camVideo');
+  async function prenderCamara() {
+    if (cam.on) return true;
+    try {
+      cam.stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user', width:{ ideal:640 }, height:{ ideal:480 } }, audio:false });
+    } catch (e) {
+      const txt = e.name === 'NotAllowedError' ? 'La cámara está bloqueada para el robot. Permitila en Chrome → Configuración de sitios → Cámara.' : 'No se pudo prender la cámara (' + e.name + ')';
+      mostrarError(txt); $('estadoCam').textContent = txt; return false;
+    }
+    camVideo.srcObject = cam.stream; try { await camVideo.play(); } catch (e) {}
+    cam.on = true; $('camLuz').style.display = 'block'; $('estadoCam').textContent = 'Cámara prendida ✔';
+    cargarDetector();
+    clearInterval(cam.timer); cam.timer = setInterval(detectarCara, 200);
+    return true;
+  }
+  function apagarCamara() {
+    clearInterval(cam.timer); cam.on = false; cam.cara = null;
+    if (cam.stream) cam.stream.getTracks().forEach(t => t.stop());
+    cam.stream = null; camVideo.srcObject = null; $('camLuz').style.display = 'none'; $('estadoCam').textContent = 'Cámara apagada';
+  }
+  let cargandoDetector = null;
+  function cargarDetector() {
+    if (cam.detector || cargandoDetector) return;
+    const V = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
+    cargandoDetector = import(V + '/vision_bundle.mjs').then(async m => {
+      const fs = await m.FilesetResolver.forVisionTasks(V + '/wasm');
+      cam.detector = await m.FaceDetector.createFromOptions(fs, {
+        baseOptions:{ modelAssetPath:'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite', delegate:'GPU' },
+        runningMode:'VIDEO', minDetectionConfidence:0.5,
+      });
+      $('estadoCam').textContent = 'Cámara prendida ✔ · siguiendo caras 👀';
+    }).catch(e => { anotar('⚠ seguir caras: ' + e.message); $('estadoCam').textContent = 'Cámara prendida (no pudo cargar el seguimiento de caras)'; cargandoDetector = null; });
+  }
+  function detectarCara() {
+    if (!cam.detector || camVideo.readyState < 2 || !camVideo.videoWidth) return;
+    let res; try { res = cam.detector.detectForVideo(camVideo, performance.now()); } catch (e) { return; }
+    const caras = (res && res.detections) || [];
+    if (!caras.length) return;
+    const b = caras.reduce((a, c) => (c.boundingBox.width > a.boundingBox.width ? c : a)).boundingBox;
+    const nx = (b.originX + b.width / 2) / camVideo.videoWidth, ny = (b.originY + b.height / 2) / camVideo.videoHeight;
+    const ahora = performance.now();
+    // la cámara de adelante ve "espejado": si la nena está a la izquierda de la pantalla, los ojos miran a la izquierda
+    cam.cara = { x:Math.max(-1, Math.min(1, -(nx * 2 - 1) * 1.2)), y:Math.max(-0.8, Math.min(0.8, (ny * 2 - 1) * 0.9)), t:ahora };
+    if (ahora - cam.ultimaVista > 60000 && estado === 'libre' && emocion === 'normal') { ponerEmocion('contento', 2500); decirFrase('saludo'); }
+    cam.ultimaVista = ahora;
+  }
+  // Saca una foto chica (para mandarle a la IA). No se guarda.
+  async function sacarFoto() {
+    const yaEstaba = cam.on;
+    if (!yaEstaba && !(await prenderCamara())) return null;
+    if (!yaEstaba) await new Promise(r => setTimeout(r, 700)); // que la cámara ajuste la luz
+    const vw = camVideo.videoWidth, vh = camVideo.videoHeight; if (!vw) return null;
+    const esc = Math.min(1, 640 / Math.max(vw, vh));
+    const c = document.createElement('canvas'); c.width = Math.round(vw * esc); c.height = Math.round(vh * esc);
+    c.getContext('2d').drawImage(camVideo, 0, 0, c.width, c.height);
+    if (!yaEstaba && !cfg.camara) apagarCamara();
+    return c.toDataURL('image/jpeg', 0.7).split(',')[1];
   }
 
   // =====================================================================
@@ -873,7 +947,9 @@ ${cfg.ensenanzas.trim().split('\n').filter(l => l.trim()).map(l => '- ' + l.trim
 ${listaCanciones().map((c, i) => `${i + 1}. ${c.nombre}`).join('\n')}
 Para poner una, terminá tu respuesta con la etiqueta [cancion:NÚMERO], por ejemplo [cancion:1]. Ponela cuando sea hora de juntar los juguetes o cuando la nena pida esa canción. No pongas música todo el tiempo.
 
-` : ''}Si un mensaje empieza con "[Mensaje de los papás]", no lo dijo la nena: es algo que los papás quieren que le digas ahora. Decíselo vos, con tus palabras, de forma cariñosa y divertida (por ejemplo, como una misión o un juego), en una o dos frases.
+` : ''}A veces, junto con lo que dice la nena, vas a recibir una foto de lo que ve tu cámara (por ejemplo, cuando te muestra un juguete). Contale lo que ves con palabras simples y alegres, y preguntale algo sobre eso. Si en la foto aparecen personas, no describas su cuerpo ni su cara: concentrate en el objeto o en lo que te quiere mostrar. Si no se ve bien, pedile que te lo acerque.
+
+Si un mensaje empieza con "[Mensaje de los papás]", no lo dijo la nena: es algo que los papás quieren que le digas ahora. Decíselo vos, con tus palabras, de forma cariñosa y divertida (por ejemplo, como una misión o un juego), en una o dos frases.
 
 Formato: empezá SIEMPRE con una etiqueta de emoción entre corchetes y después el texto. Etiquetas: [contento] [risa] [sorpresa] [pensando] [triste] [llanto] [miedo] [enojado] [normal]. Usá [llanto], [enojado] y [miedo] solo jugando, en broma (por ejemplo, llorar de mentirita en un cuento).
 Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
@@ -920,7 +996,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
     return datos;
   }
 
-  async function preguntarIA() {
+  async function preguntarIA(foto = null) {
     const prov = cfg.prov, clave = (cfg.claves[prov] || '').trim();
     const modelo = (cfg.modelos[prov] || PROVEEDORES[prov].modelo).trim();
     if (!clave) throw Object.assign(new Error('Falta la clave de API'), { sinClave:true });
@@ -928,7 +1004,8 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
     if (prov === 'gemini') {
       const cuerpo = JSON.stringify({
         system_instruction:{ parts:[{ text:reglas() }] },
-        contents: historial.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts:[{ text:m.content }] })),
+        contents: historial.map((m, i) => ({ role: m.role === 'assistant' ? 'model' : 'user',
+          parts: (foto && i === historial.length - 1) ? [{ text:m.content }, { inline_data:{ mime_type:'image/jpeg', data:foto } }] : [{ text:m.content }] })),
         generationConfig:{ maxOutputTokens:2000, temperature:0.8 },
       });
       const llamar = mod => pedir(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(mod)}:generateContent?key=${encodeURIComponent(clave)}`,
@@ -947,7 +1024,8 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
         method:'POST',
         headers:{ 'content-type':'application/json', 'x-api-key':clave, 'anthropic-version':'2023-06-01',
                   'anthropic-dangerous-direct-browser-access':'true' },
-        body: JSON.stringify({ model:modelo, max_tokens:300, system:reglas(), messages:historial }),
+        body: JSON.stringify({ model:modelo, max_tokens:300, system:reglas(), messages: historial.map((m, i) =>
+          (foto && i === historial.length - 1) ? { role:m.role, content:[{ type:'image', source:{ type:'base64', media_type:'image/jpeg', data:foto } }, { type:'text', text:m.content }] } : m) }),
       });
       return (datos.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
     }
@@ -955,7 +1033,8 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
     datos = await pedir('https://api.openai.com/v1/chat/completions', {
       method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + clave },
       body: JSON.stringify({ model:modelo, max_completion_tokens:800,
-        messages:[{ role:'system', content:reglas() }, ...historial] }),
+        messages:[{ role:'system', content:reglas() }, ...historial.map((m, i) =>
+          (foto && i === historial.length - 1) ? { role:m.role, content:[{ type:'text', text:m.content }, { type:'image_url', image_url:{ url:'data:image/jpeg;base64,' + foto } }] } : m)] }),
     });
     return datos.choices?.[0]?.message?.content || '';
   }
@@ -981,7 +1060,13 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
     while (historial.length > MAX_MENSAJES) historial.splice(0, 2);
     anotar((dePapas ? '👨 ' : '👧 ') + lo_que_dijo.replace('[Mensaje de los papás] ', ''));
     let respuesta;
-    const pedido = preguntarIA(); pedido.catch(() => {});
+    // "¿Qué es esto?", "mirá", "¿qué ves?"... -> saca una foto para mostrársela a la IA
+    let foto = null;
+    if (!dePapas && (cfg.camara || cam.on) && /(qu[eé] es esto|qu[eé] es eso|mir[aá]|qu[eé] ves|qu[eé] tengo|adivin|te muestro|ves esto|de qu[eé] color)/i.test(lo_que_dijo)) {
+      foto = await sacarFoto();
+      if (foto) anotar('📷 (foto enviada a la IA, no se guarda)');
+    }
+    const pedido = preguntarIA(foto); pedido.catch(() => {});
     // A veces la imita (voz finita) mientras la IA piensa la respuesta
     if (!dePapas && cfg.repetir && lo_que_dijo.length <= 70 && Math.random() < 0.3) {
       await hablar(lo_que_dijo, 'risa', { pitch:2, rate:1.15, sinBips:true });
@@ -1089,6 +1174,13 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   });
   $('texto').addEventListener('keydown', e => { if (e.key === 'Enter') $('enviar').click(); });
   $('pararMusica').addEventListener('click', () => terminarMusica(false));
+  $('camara').checked = !!cfg.camara;
+  $('camara').addEventListener('change', async e => {
+    cfg.camara = e.target.checked; guardar();
+    if (cfg.camara) { if (!(await prenderCamara())) { cfg.camara = false; e.target.checked = false; guardar(); } }
+    else apagarCamara();
+  });
+  if (cfg.camara) setTimeout(() => prenderCamara(), 1500);
   $('cerrarMusica').addEventListener('click', () => terminarMusica(false));
   $('ensenanzas').value = cfg.ensenanzas || '';
   $('ensenanzas').addEventListener('input', e => { cfg.ensenanzas = e.target.value; guardar(); });
@@ -1139,7 +1231,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '22';
+  const VERSION = '23';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
