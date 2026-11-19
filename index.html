@@ -117,6 +117,10 @@
   <div class="fila"><button id="probarVoz">Probar voz</button><button id="probarMic">Probar micrófono</button></div>
   <div class="fila"><button id="pedirMic" style="flex:1">🎙️ Pedir permiso de micrófono</button></div>
   <label><input id="verMic" type="checkbox"> Mostrar botones 🎤 y 🦜</label>
+  <label><input id="despertar" type="checkbox"> Escuchar siempre: se despierta cuando lo llaman por su nombre</label>
+  <label>Palabra para llamarlo
+    <input id="palabra" type="text" placeholder="Emo">
+  </label>
   <label><input id="repetir" type="checkbox"> En la charla, a veces repite lo que dice la nena</label>
   <label>Voz del loro 🦜 (más a la derecha = más aguda)
     <input id="loroTono" type="range" min="1.1" max="2" step="0.05">
@@ -185,7 +189,7 @@
   };
   const cfg = {
     prov:'gemini', claves:{}, modelos:{}, nomRobot:'', nomNena:'',
-    tono:1.4, velocidad:1.0, orientacion:'vertical', fuerza:4.5, movOn:true, verMic:true, sens:1.6, repetir:true, loroTono:1.5, ensenanzas:'', camara:false, youtube:false, ytClave:'',
+    tono:1.4, velocidad:1.0, orientacion:'vertical', fuerza:4.5, movOn:true, verMic:true, sens:1.6, repetir:true, loroTono:1.5, ensenanzas:'', camara:false, despertar:false, palabra:'Emo', youtube:false, ytClave:'',
   };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem('robot_cfg') || '{}')); } catch (e) {}
   const guardar = () => { try { localStorage.setItem('robot_cfg', JSON.stringify(cfg)); } catch (e) {} };
@@ -693,6 +697,11 @@
   }
 
   async function hablar(texto, emo = 'contento', opts = {}) {
+    pararEspera(); // que no se escuche a sí mismo
+    try { return await hablarYa(texto, emo, opts); }
+    finally { clearTimeout(timerEspera); timerEspera = setTimeout(esperarNombre, 800); }
+  }
+  async function hablarYa(texto, emo, opts) {
     if (cfg.bips && !opts.sinBips) await bips();
     return new Promise(resolve => {
       if (!('speechSynthesis' in window)) { ponerEmocion(emo, 3000); return resolve(); }
@@ -740,12 +749,14 @@
     else {
       try { reconocedor && reconocedor.abort(); } catch (e) {}
       if (estado === 'escuchando') { estado = 'libre'; ponerEmocion('normal'); }
+      timerEspera = setTimeout(esperarNombre, 1200);
     }
   }
   function seguirCharla() {
     if (modoCharla) setTimeout(() => { if (modoCharla && estado === 'libre') escuchar(); }, 400);
   }
   function escuchar() {
+    pararEspera();
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { avisoIA('Este navegador no tiene reconocimiento de voz. Usá Chrome.'); ponerEmocion('triste', 2000); return; }
     if (estado !== 'libre') return;
@@ -784,12 +795,70 @@
   }
 
   // =====================================================================
+  // LLAMARLO POR SU NOMBRE: escucha siempre y, cuando oye la palabra, arranca la charla
+  // =====================================================================
+  let recEspera = null, timerEspera = 0;
+  const normal = t => t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zñ ]/g, ' ');
+  function distancia(a, b) { // cuántas letras hay que cambiar (para aceptar "emmo", "hemo", "eno"...)
+    const d = Array.from({ length:a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+    for (let j = 1; j <= b.length; j++) d[0][j] = j;
+    for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    return d[a.length][b.length];
+  }
+  // devuelve lo que dijo después del nombre ('' si solo lo llamó), o null si no lo llamó
+  function buscarNombre(texto) {
+    const objetivo = normal(cfg.palabra || 'Emo').trim(); if (!objetivo) return null;
+    const pal = normal(texto).split(/\s+/).filter(Boolean);
+    const tol = objetivo.length <= 4 ? 1 : 2;
+    for (let i = 0; i < pal.length; i++) {
+      const w = pal[i].replace(/^h/, '');
+      if (distancia(w, objetivo) <= tol && Math.abs(w.length - objetivo.length) <= 1) return pal.slice(i + 1).join(' ');
+    }
+    return null;
+  }
+  function esperarNombre() {
+    clearTimeout(timerEspera);
+    if (!cfg.despertar) return;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+    if (modoCharla || modoLoro || bailando || estado !== 'libre' || document.hidden || hablandoAnim) { timerEspera = setTimeout(esperarNombre, 1500); return; }
+    let llamado = false;
+    recEspera = new SR();
+    recEspera.lang = 'es-AR'; recEspera.continuous = true; recEspera.interimResults = true;
+    recEspera.onresult = e => {
+      if (llamado) return;
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const resto = buscarNombre(e.results[i][0].transcript);
+        if (resto === null) continue;
+        if (!e.results[i].isFinal && resto === '') continue; // esperar a ver si dice algo más
+        llamado = true;
+        try { recEspera.abort(); } catch (_) {}
+        anotar('👂 Me llamaron');
+        if (resto.trim().length > 2) { // "Emo, ¿qué es esto?" -> contesta directo y queda charlando
+          modoCharla = true; silencios = 0; $('mic').classList.add('activo'); conversar(resto);
+        } else {
+          estado = 'pensando'; ponerEmocion('sorpresa', 800);
+          hablar(['¿Sí?', '¡Acá estoy!', '¿Qué pasa?', '¡Hola! Te escucho.'][Math.floor(Math.random() * 4)], 'contento', { sinBips:true })
+            .then(() => { estado = 'libre'; activarCharla(true); });
+        }
+        return;
+      }
+    };
+    recEspera.onerror = e => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { cfg.despertar = false; $('despertar').checked = false; guardar(); mostrarError('Para escuchar siempre hace falta permiso de micrófono.'); } };
+    recEspera.onend = () => { recEspera = null; if (!llamado) timerEspera = setTimeout(esperarNombre, 250); else timerEspera = setTimeout(esperarNombre, 3000); };
+    try { recEspera.start(); } catch (e) { timerEspera = setTimeout(esperarNombre, 2000); }
+  }
+  function pararEspera() { clearTimeout(timerEspera); try { recEspera && recEspera.abort(); } catch (e) {} recEspera = null; }
+
+  // =====================================================================
   // MODO LORO: graba lo que dice la nena y lo repite con voz de ardilla.
   // El audio queda solo en el celular: no se manda a ningún lado.
   // =====================================================================
   let modoLoro = false, loro = null;
   async function activarLoro(si) {
     if (si === modoLoro) return;
+    if (si) pararEspera();
     if (!si) {
       modoLoro = false; $('loro').classList.remove('activo');
       if (loro) { try { loro.proc.disconnect(); loro.fuente.disconnect(); loro.stream.getTracks().forEach(t => t.stop()); } catch (e) {} }
@@ -1001,7 +1070,7 @@
   const MAX_MENSAJES = 20;
 
   function reglas() {
-    const robot = cfg.nomRobot.trim() || 'Bipo';
+    const robot = cfg.nomRobot.trim() || (cfg.despertar && cfg.palabra) || 'Bipo';
     const nena = cfg.nomNena.trim() ? `Hablás con ${cfg.nomNena.trim()}, una nena de 4 años.` : 'Hablás con una nena de 4 años.';
     return `Sos ${robot}, un robot de juguete chiquito, curioso y cariñoso, con ojitos en una pantalla. ${nena} Vivís en Argentina: hablá en español rioplatense, con "vos".
 
@@ -1250,6 +1319,14 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   $('probarMic').addEventListener('click', () => { panel.classList.remove('abierto'); activarCharla(true); });
   $('verMic').checked = cfg.verMic;
   const aplicarMic = () => { $('mic').classList.toggle('oculto', !cfg.verMic); $('loro').classList.toggle('oculto', !cfg.verMic); };
+  $('despertar').checked = !!cfg.despertar;
+  $('despertar').addEventListener('change', async e => {
+    cfg.despertar = e.target.checked; guardar();
+    if (cfg.despertar) { if (await asegurarMic()) esperarNombre(); } else pararEspera();
+  });
+  $('palabra').value = cfg.palabra || 'Emo';
+  $('palabra').addEventListener('input', e => { cfg.palabra = e.target.value.trim() || 'Emo'; guardar(); });
+  if (cfg.despertar) setTimeout(esperarNombre, 2500);
   $('repetir').checked = !!cfg.repetir;
   $('repetir').addEventListener('change', e => { cfg.repetir = e.target.checked; guardar(); });
   $('loroTono').value = cfg.loroTono;
@@ -1334,7 +1411,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '25';
+  const VERSION = '26';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
