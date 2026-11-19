@@ -22,12 +22,11 @@
   #mic { position:fixed; left:50%; bottom:12px; transform:translateX(-50%); width:64px; height:64px;
     border-radius:50%; border:2px solid #3ff0ff55; background:#3ff0ff18; color:#3ff0ffcc; font-size:28px; z-index:3; }
   #mic.oculto, #loro.oculto { display:none; }
-  #musica { position:fixed; left:50%; bottom:86px; transform:translateX(-50%); width:min(40vw, 52vh); aspect-ratio:16/9;
-    border:3px solid #3ff0ff88; border-radius:14px; overflow:hidden; background:#000; z-index:3; display:none; box-shadow:0 0 24px #3ff0ff55; }
-  #musica.visible { display:block; }
-  #musica iframe { width:100%; height:100%; border:0; }
-  #cerrarMusica { position:fixed; z-index:4; display:none; width:40px; height:40px; border-radius:50%; border:none;
-    background:#000c; color:#fff; font-size:20px; }
+  #cerrarMusica { position:fixed; z-index:4; display:none; right:62px; bottom:8px; width:44px; height:44px; border-radius:50%; border:none;
+    background:#ffffff14; color:#ffffff60; font-size:20px; }
+  .cancion { display:flex; align-items:center; gap:6px; margin-top:6px; font-size:14px; }
+  .cancion span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cancion button { padding:6px 10px !important; }
   #loro { position:fixed; left:12px; bottom:12px; width:56px; height:56px; border-radius:50%;
     border:2px solid #ffd34a55; background:#ffd34a18; font-size:26px; z-index:3; }
   #loro.activo { background:#ffd34a40; border-color:#ffd34a; box-shadow:0 0 18px #ffd34aaa; }
@@ -67,8 +66,7 @@
   <small>(se pone en pantalla completa)</small>
 </div>
 
-<div id="musica"><div id="ytPlayer"></div></div>
-<button id="cerrarMusica" aria-label="Parar música">✕</button>
+<button id="cerrarMusica" aria-label="Parar música">⏹</button>
 <button id="mic" aria-label="Hablar">🎤</button>
 <button id="loro" aria-label="Modo loro">🦜</button>
 <button id="engranaje" aria-label="Ajustes">⚙</button>
@@ -129,10 +127,10 @@
   <div class="fila"><button id="decirTal" style="flex:1">🗣️ Decirlo tal cual</button><button id="decirIA" style="flex:1">✨ A su manera</button></div>
 
   <h4>Música 🎵</h4>
-  <label>Canciones de YouTube (una por renglón: nombre | link). El robot las pone cuando hace falta:
-    <textarea id="canciones"></textarea>
-  </label>
-  <div class="fila"><button id="probarCancion" style="flex:1">▶ Poner la 1</button><button id="pararMusica" style="flex:1">⏹ Parar</button></div>
+  <div style="font-size:13px">Subí canciones (mp3 u otro audio) desde este celular. Quedan guardadas acá, en el robot, y suenan sin video. Poné un nombre claro (ej: "A guardar") para que el robot sepa cuándo usarla.</div>
+  <label><input id="subirCancion" type="file" accept="audio/*" multiple style="margin-top:6px"></label>
+  <div id="listaCanciones"></div>
+  <div class="fila"><button id="pararMusica" style="flex:1">⏹ Parar música</button></div>
 
   <h4>Charla de hoy</h4>
   <div id="charla"></div>
@@ -163,7 +161,6 @@
   const cfg = {
     prov:'gemini', claves:{}, modelos:{}, nomRobot:'', nomNena:'',
     tono:1.4, velocidad:1.0, verMic:true, sens:1.6, repetir:true, loroTono:1.5, ensenanzas:'',
-    canciones:'A guardar, a guardar (canción del jardín) | https://www.youtube.com/watch?v=HCynKopZ6Z4\nA guardar (Pica-Pica) | https://www.youtube.com/watch?v=SexxNS3WSuo',
   };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem('robot_cfg') || '{}')); } catch (e) {}
   const guardar = () => { try { localStorage.setItem('robot_cfg', JSON.stringify(cfg)); } catch (e) {} };
@@ -386,11 +383,11 @@
     if (emocion === 'escuchando') escala = 1 + 0.03 * Math.sin(t * 4) + nivelVoz * 0.04;
 
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
-    const base = Math.min(W * 0.24, H * 0.5) * escala * (bailando ? 0.7 : 1);
+    const base = Math.min(W * 0.24, H * 0.5) * escala;
     const sep = Math.min(W * 0.19, base * 1.05);
     const ox = mirada.x * W * 0.1 + (bailando ? Math.sin(t * 4) * base * 0.12 : 0);
     const oy = mirada.y * H * 0.12 + (emocion === 'llanto' ? Math.abs(Math.sin(t * 7)) * base * 0.05 : 0) // sollozo
-      - (bailando ? Math.abs(Math.sin(t * 8)) * base * 0.08 + base * 0.3 : 0); // baile (y sube para dejar lugar al video)
+      - (bailando ? Math.abs(Math.sin(t * 8)) * base * 0.1 : 0); // baile (y sube para dejar lugar al video)
     const tx = (Math.random() * 2 - 1) * (forma.tiembla + vibra), ty = (Math.random() * 2 - 1) * (forma.tiembla + vibra);
     for (const lado of [-1, 1]) {
       const cx = W / 2 + lado * sep + ox + tx, cy = H / 2 + oy + ty;
@@ -700,62 +697,91 @@
   }
 
   // =====================================================================
-  // MÚSICA: videos de YouTube (por ejemplo, para guardar los juguetes)
+  // MÚSICA: canciones subidas por los papás, guardadas en el celular (IndexedDB)
   // =====================================================================
-  function listaCanciones() {
-    return (cfg.canciones || '').split('\n').map(l => {
-      const [nombre, link] = l.includes('|') ? l.split('|') : ['', l];
-      const m = /(?:v=|youtu\.be\/|shorts\/|embed\/)([\w-]{11})/.exec(link || '');
-      return m ? { nombre:(nombre || 'Canción').trim(), id:m[1] } : null;
-    }).filter(Boolean);
-  }
-  let yt = null, ytListo = null, charlaPausada = false, cancionActual = -1;
-  function cargarYT() {
-    if (ytListo) return ytListo;
-    ytListo = new Promise(res => {
-      window.onYouTubeIframeAPIReady = res;
-      const sc = document.createElement('script'); sc.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(sc);
+  let canciones = []; // { id, nombre }
+  let db = null;
+  function abrirDB() {
+    if (db) return Promise.resolve(db);
+    return new Promise((res, rej) => {
+      const r = indexedDB.open('robot', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('canciones', { keyPath:'id' });
+      r.onsuccess = () => { db = r.result; res(db); };
+      r.onerror = () => rej(r.error);
     });
-    return ytListo;
   }
-  function ubicarCerrar() {
-    const r = $('musica').getBoundingClientRect(), b = $('cerrarMusica');
-    b.style.left = (r.right - 22) + 'px'; b.style.top = (r.top - 18) + 'px';
+  async function tx(modo, fn) {
+    const d = await abrirDB();
+    return new Promise((res, rej) => {
+      const t = d.transaction('canciones', modo), st = t.objectStore('canciones');
+      const r = fn(st); t.oncomplete = () => res(r && r.result); t.onerror = () => rej(t.error);
+    });
   }
+  async function cargarCanciones() {
+    try {
+      const todas = await tx('readonly', st => st.getAll());
+      canciones = (todas || []).map(c => ({ id:c.id, nombre:c.nombre })).sort((a, b) => a.id - b.id);
+    } catch (e) { canciones = []; }
+    mostrarCanciones();
+  }
+  function mostrarCanciones() {
+    const cont = $('listaCanciones'); cont.innerHTML = '';
+    if (!canciones.length) { cont.innerHTML = '<div style="font-size:12px;color:#7aa;margin-top:6px">Todavía no hay canciones.</div>'; return; }
+    canciones.forEach((c, i) => {
+      const fila = document.createElement('div'); fila.className = 'cancion';
+      const nom = document.createElement('span'); nom.textContent = `${i + 1}. ${c.nombre}`;
+      const play = document.createElement('button'); play.textContent = '▶';
+      play.onclick = () => { panel.classList.remove('abierto'); ponerMusica(i); };
+      const ren = document.createElement('button'); ren.textContent = '✏️';
+      ren.onclick = async () => {
+        const nuevo = (window.prompt ? prompt('Nombre de la canción:', c.nombre) : null);
+        if (nuevo && nuevo.trim()) { await tx('readwrite', st => { const g = st.get(c.id); g.onsuccess = () => { const v = g.result; v.nombre = nuevo.trim(); st.put(v); }; return g; }); cargarCanciones(); }
+      };
+      const del = document.createElement('button'); del.textContent = '🗑';
+      del.onclick = async () => { await tx('readwrite', st => st.delete(c.id)); cargarCanciones(); };
+      fila.append(nom, play, ren, del); cont.appendChild(fila);
+    });
+  }
+  $('subirCancion').addEventListener('change', async e => {
+    const archivos = [...e.target.files];
+    for (const f of archivos) {
+      const nombre = f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() || 'Canción';
+      try { await tx('readwrite', st => st.put({ id:Date.now() + Math.random(), nombre, blob:f })); }
+      catch (err) { mostrarError('No se pudo guardar la canción: ' + err.message); }
+    }
+    e.target.value = '';
+    cargarCanciones();
+  });
+
+  const audio = new Audio(); let urlAudio = null, charlaPausada = false;
+  audio.addEventListener('ended', () => terminarMusica(true));
+  audio.addEventListener('error', () => { if (bailando) { terminarMusica(false); mostrarError('No se pudo reproducir la canción'); } });
   async function ponerMusica(n = 0) {
-    const lista = listaCanciones();
-    if (!lista.length) { mostrarError('No hay canciones cargadas en el engranaje'); return; }
-    n = Math.max(0, Math.min(lista.length - 1, n)); cancionActual = n;
+    if (!canciones.length) { mostrarError('No hay canciones cargadas. Subilas desde el engranaje → Música'); return; }
+    n = Math.max(0, Math.min(canciones.length - 1, n));
+    let reg;
+    try { reg = await tx('readonly', st => st.get(canciones[n].id)); } catch (e) {}
+    if (!reg) { mostrarError('No encontré esa canción'); return; }
     if (modoCharla) { charlaPausada = true; activarCharla(false); }
     if (modoLoro) activarLoro(false);
-    $('musica').classList.add('visible'); $('cerrarMusica').style.display = 'block'; ubicarCerrar();
+    if (urlAudio) URL.revokeObjectURL(urlAudio);
+    urlAudio = URL.createObjectURL(reg.blob);
+    audio.src = urlAudio;
     bailando = true; ponerEmocion('contento', 3600000);
-    anotar('🎵 ' + lista[n].nombre);
-    await cargarYT();
-    if (yt) { yt.loadVideoById(lista[n].id); return; }
-    yt = new YT.Player('ytPlayer', {
-      host:'https://www.youtube-nocookie.com', videoId:lista[n].id,
-      playerVars:{ autoplay:1, playsinline:1, rel:0, modestbranding:1, fs:0 },
-      events:{
-        onReady: e => e.target.playVideo(),
-        onStateChange: e => { if (e.data === YT.PlayerState.ENDED) terminarMusica(true); },
-        onError: () => { // ese video no se deja poner acá: probamos con el siguiente
-          anotar('⚠ no se pudo poner: ' + (listaCanciones()[cancionActual] || {}).nombre);
-          const l = listaCanciones();
-          if (cancionActual + 1 < l.length) ponerMusica(cancionActual + 1); else { terminarMusica(false); mostrarError('No se pudo poner la canción'); }
-        },
-      },
-    });
+    $('cerrarMusica').style.display = 'block';
+    anotar('🎵 ' + reg.nombre);
+    try { await audio.play(); } catch (e) { terminarMusica(false); mostrarError('No se pudo reproducir: ' + e.message); }
   }
   function terminarMusica(festejar) {
-    try { yt && yt.stopVideo(); } catch (e) {}
-    $('musica').classList.remove('visible'); $('cerrarMusica').style.display = 'none';
+    try { audio.pause(); } catch (e) {}
+    $('cerrarMusica').style.display = 'none';
     bailando = false; ponerEmocion('normal');
     const reanudar = () => { if (charlaPausada) { charlaPausada = false; activarCharla(true); } };
     if (festejar) hablar('¡Bravo! ¡Qué lindo cantamos! ¿Quedó todo ordenadito?', 'risa').then(reanudar);
     else reanudar();
   }
-  addEventListener('resize', () => { if ($('musica').classList.contains('visible')) ubicarCerrar(); });
+  const listaCanciones = () => canciones;
+  cargarCanciones();
 
   // =====================================================================
   // CEREBRO: la IA
@@ -785,7 +811,7 @@ Reglas de cuidado (muy importantes):
 ${(cfg.ensenanzas || '').trim() ? `Cosas buenas que los papás te pidieron que le enseñes (sacalas de vez en cuando en la charla, no en cada respuesta; siempre de forma divertida y cariñosa, como un juego, un desafío o una canción, nunca retándola; si la nena cuenta que lo hizo, festejalo mucho):
 ${cfg.ensenanzas.trim().split('\n').filter(l => l.trim()).map(l => '- ' + l.trim()).join('\n')}
 
-` : ''}${listaCanciones().length ? `Canciones que podés poner en el robot (de YouTube):
+` : ''}${listaCanciones().length ? `Canciones que podés poner en el robot:
 ${listaCanciones().map((c, i) => `${i + 1}. ${c.nombre}`).join('\n')}
 Para poner una, terminá tu respuesta con la etiqueta [cancion:NÚMERO], por ejemplo [cancion:1]. Ponela cuando sea hora de juntar los juguetes o cuando la nena pida esa canción. No pongas música todo el tiempo.
 
@@ -1004,9 +1030,6 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
     if (estado === 'libre') conversar(t);
   });
   $('texto').addEventListener('keydown', e => { if (e.key === 'Enter') $('enviar').click(); });
-  $('canciones').value = cfg.canciones || '';
-  $('canciones').addEventListener('input', e => { cfg.canciones = e.target.value; guardar(); });
-  $('probarCancion').addEventListener('click', () => { panel.classList.remove('abierto'); ponerMusica(0); });
   $('pararMusica').addEventListener('click', () => terminarMusica(false));
   $('cerrarMusica').addEventListener('click', () => terminarMusica(false));
   $('ensenanzas').value = cfg.ensenanzas || '';
@@ -1058,7 +1081,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '20';
+  const VERSION = '21';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
