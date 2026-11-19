@@ -192,16 +192,16 @@
   document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(ajustar, 50); });
   addEventListener('error', e => { try { anotar('⚠ JS: ' + e.message); } catch (_) {} });
 
-  const CYAN = [63,240,255];
+  const CYAN = [70,195,255];
   const BASE = {
-    normal:     { w:1.00, h:1.00, r:0.28, enojo:0,    preoc:0,    alegre:0, color:CYAN,          tiembla:0 },
-    contento:   { w:1.00, h:1.00, r:0.30, enojo:0,    preoc:0,    alegre:1, color:CYAN,          tiembla:0 },
+    normal:     { w:1.15, h:0.78, r:0.32, enojo:0,    preoc:0,    alegre:0, color:CYAN,          tiembla:0 },
+    contento:   { w:1.15, h:0.85, r:0.32, enojo:0,    preoc:0,    alegre:1, color:CYAN,          tiembla:0 },
     enojado:    { w:1.05, h:0.80, r:0.20, enojo:0.50, preoc:0,    alegre:0, color:[255,60,60],   tiembla:2 },
     miedo:      { w:0.70, h:1.05, r:0.40, enojo:0,    preoc:0.40, alegre:0, color:[170,200,255], tiembla:4 },
-    sorpresa:   { w:1.12, h:1.18, r:0.50, enojo:0,    preoc:0,    alegre:0, color:CYAN,          tiembla:0 },
+    sorpresa:   { w:1.00, h:1.00, r:0.50, enojo:0,    preoc:0,    alegre:0, color:CYAN,          tiembla:0 },
     triste:     { w:0.95, h:0.85, r:0.30, enojo:0,    preoc:0.45, alegre:0, color:[90,160,255],  tiembla:0 },
     pensando:   { w:0.95, h:0.70, r:0.30, enojo:0.12, preoc:0,    alegre:0, color:CYAN,          tiembla:0 },
-    escuchando: { w:1.05, h:1.10, r:0.45, enojo:0,    preoc:0,    alegre:0, color:[80,255,150],  tiembla:0 },
+    escuchando: { w:1.10, h:0.70, r:0.40, enojo:0,    preoc:0,    alegre:0, color:[80,255,150],  tiembla:0 },
     llanto:     { w:0.95, h:0.70, r:0.35, enojo:0,    preoc:0.55, alegre:0, color:[90,160,255],  tiembla:1 },
   };
   const ESPECIALES = ['risa', 'cruz', 'mareado', 'dormido'];
@@ -252,6 +252,58 @@
       ctx.fill();
     }
   }
+  // =====================================================================
+  // DIBUJITOS que aparecen en la pantalla según lo que hace
+  // =====================================================================
+  function trazo(color, ancho) {
+    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = ancho; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.shadowColor = color; ctx.shadowBlur = 16;
+  }
+  // Micrófono (cuando escucha)
+  function micro(x, y, s, t) {
+    const c = rgb(forma.color); trazo(c, s * 0.05);
+    y += Math.sin(t * 3) * s * 0.03;
+    const cw = s * 0.22, ch = s * 0.3;
+    rectRedondo(x - cw / 2, y - ch, cw, ch, cw / 2); ctx.stroke();
+    ctx.save(); rectRedondo(x - cw / 2, y - ch, cw, ch, cw / 2); ctx.clip(); ctx.lineWidth = s * 0.02;
+    for (let i = 1; i < 4; i++) { ctx.beginPath(); ctx.moveTo(x - cw / 2, y - ch + ch * i / 4); ctx.lineTo(x + cw / 2, y - ch + ch * i / 4); ctx.stroke(); }
+    ctx.restore(); trazo(c, s * 0.05);
+    ctx.beginPath(); ctx.arc(x, y - ch * 0.45, cw * 0.85, 0.1 * Math.PI, 0.9 * Math.PI); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x, y + cw * 0.4); ctx.lineTo(x, y + s * 0.14); ctx.moveTo(x - s * 0.08, y + s * 0.14); ctx.lineTo(x + s * 0.08, y + s * 0.14); ctx.stroke();
+  }
+  // Puñito (cuando se enoja): lado -1 izquierda, 1 derecha
+  function puno(x, y, s, t, lado) {
+    const c = rgb(forma.color); trazo(c, s * 0.045);
+    const golpe = Math.max(0, Math.sin(t * 9 + (lado > 0 ? Math.PI : 0)));
+    x -= lado * golpe * s * 0.1; y -= golpe * s * 0.05;
+    const w = s * 0.3, h = s * 0.26;
+    rectRedondo(x - w / 2, y - h / 2, w, h, s * 0.08); ctx.stroke();
+    for (let i = 1; i < 4; i++) { const fx = x - w / 2 + w * i / 4; ctx.beginPath(); ctx.moveTo(fx, y - h / 2); ctx.lineTo(fx, y - h * 0.05); ctx.stroke(); }
+    ctx.beginPath(); ctx.moveTo(x + lado * w * 0.5, y + h * 0.05); ctx.quadraticCurveTo(x + lado * w * 0.15, y + h * 0.1, x + lado * w * 0.05, y + h * 0.5); ctx.stroke(); // pulgar
+    ctx.beginPath(); ctx.moveTo(x - w * 0.3, y + h / 2); ctx.lineTo(x - w * 0.3, y + h * 0.8); ctx.moveTo(x + w * 0.3, y + h / 2); ctx.lineTo(x + w * 0.3, y + h * 0.8); ctx.stroke(); // muñeca
+  }
+  // Notas musicales que suben (con la música)
+  function notas(cx, cy, s, t) {
+    const c = rgb(forma.color);
+    for (let i = 0; i < 4; i++) {
+      const f = (t * 0.35 + i / 4) % 1, lado = i % 2 ? 1 : -1;
+      const x = cx + lado * s * (1.6 + 0.2 * Math.sin(t * 2 + i)), y = cy + s * 0.6 - f * s * 1.6;
+      ctx.globalAlpha = Math.sin(f * Math.PI); trazo(c, s * 0.035);
+      const r = s * 0.06;
+      ctx.beginPath(); ctx.ellipse(x, y, r * 1.2, r, -0.4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x + r * 1.1, y); ctx.lineTo(x + r * 1.1, y - s * 0.22); ctx.quadraticCurveTo(x + r * 2.5, y - s * 0.17, x + r * 2.2, y - s * 0.08); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+  // Sorpresa: un ojo grande, otro más chico y una "o" chiquita
+  function caraSorpresa(cx, cy, s, t) {
+    const c = rgb(forma.color); ctx.fillStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 30;
+    const sep = s * 1.0, p = 1 + 0.03 * Math.sin(t * 10);
+    ctx.beginPath(); ctx.arc(cx - sep, cy - s * 0.05, s * 0.48 * p, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + sep, cy - s * 0.1, s * 0.3 * p, 0, Math.PI * 2); ctx.fill();
+    trazo(c, s * 0.04); ctx.beginPath(); ctx.ellipse(cx + s * 0.1, cy + s * 0.45, s * 0.05, s * 0.065, 0, 0, Math.PI * 2); ctx.stroke();
+  }
+
   // Onditas de sonido dentro del ojo: muestran que está escuchando (más grandes cuando la nena habla)
   function onditas(cx, cy, w, h, t, lado) {
     ctx.save();
@@ -389,7 +441,9 @@
     const oy = mirada.y * H * 0.12 + (emocion === 'llanto' ? Math.abs(Math.sin(t * 7)) * base * 0.05 : 0) // sollozo
       - (bailando ? Math.abs(Math.sin(t * 8)) * base * 0.1 : 0); // baile (y sube para dejar lugar al video)
     const tx = (Math.random() * 2 - 1) * (forma.tiembla + vibra), ty = (Math.random() * 2 - 1) * (forma.tiembla + vibra);
-    for (const lado of [-1, 1]) {
+    if (emocion === 'sorpresa') {
+      caraSorpresa(W / 2 + ox + tx, H / 2 + oy + ty, base, t);
+    } else for (const lado of [-1, 1]) {
       const cx = W / 2 + lado * sep + ox + tx, cy = H / 2 + oy + ty;
       const w = base * forma.w * 0.9, h = base * forma.h * factorH;
       if (emocion === 'risa') ojoRisa(cx, cy, w, base * forma.h, t);
@@ -400,6 +454,10 @@
       if (emocion === 'escuchando') onditas(cx, cy, w, h, t, lado);
       if (emocion === 'llanto') lagrimas(cx, cy + base * forma.h * 0.35, base, t, lado);
     }
+    // dibujitos
+    if (emocion === 'escuchando' && !modoLoro) micro(W / 2 + ox, H / 2 + oy + base * 0.78, base, t);
+    if (emocion === 'enojado') { puno(W / 2 - sep * 0.55 + ox, H / 2 + oy + base * 0.7, base, t, -1); puno(W / 2 + sep * 0.55 + ox, H / 2 + oy + base * 0.7, base, t, 1); }
+    if (bailando) notas(W / 2, H / 2 + oy, base, t);
     if (emocion === 'miedo') gotaSudor(W / 2 + sep + base * 0.6, H / 2 - base * 0.55, base * 0.12, t);
     if (emocion === 'dormido') textoFlotante('z', W / 2 + sep + base * 0.5, H / 2 - base * 0.5, base * 0.25, t, 'rgba(63,240,255,0.7)');
     if (emocion === 'pensando') textoFlotante('?', W / 2 + sep + base * 0.7, H / 2 - base * 0.6, base * 0.22, t, 'rgba(63,240,255,0.6)');
@@ -1081,7 +1139,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '21';
+  const VERSION = '22';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
