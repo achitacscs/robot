@@ -144,11 +144,19 @@
   <div class="fila"><button id="borrar">Borrar charla</button></div>
 
   <h4>Sensores</h4>
-  <label>Sensibilidad al levantarlo
-    <input id="sens" type="range" min="0.4" max="4" step="0.1">
+  <label><input id="movOn" type="checkbox"> Reaccionar cuando lo mueven (mareado / susto)</label>
+  <label>Cuánto hay que sacudirlo para que se maree (más a la derecha = más fuerte)
+    <input id="sens" type="range" min="1.5" max="9" step="0.25">
   </label>
   <div id="medidor"><div></div><span></span></div>
   <div id="estadoSensor">Sensor: esperando movimiento…</div>
+  <label>Pantalla
+    <select id="orientacion">
+      <option value="vertical">Vertical (parado)</option>
+      <option value="horizontal">Horizontal (acostado)</option>
+      <option value="libre">Que gire sola</option>
+    </select>
+  </label>
   <div class="fila"><button id="btnFull" style="flex:1">Pantalla completa</button><button id="cerrar" style="flex:1">Cerrar</button></div>
   <div class="fila"><button id="actualizar" style="flex:1">🔄 Actualizar</button></div>
   <div id="version" style="font-size:12px;color:#7aa;margin-top:6px"></div>
@@ -167,7 +175,7 @@
   };
   const cfg = {
     prov:'gemini', claves:{}, modelos:{}, nomRobot:'', nomNena:'',
-    tono:1.4, velocidad:1.0, verMic:true, sens:1.6, repetir:true, loroTono:1.5, ensenanzas:'', camara:false,
+    tono:1.4, velocidad:1.0, orientacion:'vertical', fuerza:4.5, movOn:true, verMic:true, sens:1.6, repetir:true, loroTono:1.5, ensenanzas:'', camara:false,
   };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem('robot_cfg') || '{}')); } catch (e) {}
   const guardar = () => { try { localStorage.setItem('robot_cfg', JSON.stringify(cfg)); } catch (e) {} };
@@ -445,8 +453,9 @@
     if (emocion === 'escuchando') escala = 1 + 0.03 * Math.sin(t * 4) + nivelVoz * 0.04;
 
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
-    const base = Math.min(W * 0.24, H * 0.5) * escala;
-    const sep = Math.min(W * 0.19, base * 1.05);
+    const vertical = H > W;
+    const base = (vertical ? Math.min(W * 0.3, H * 0.35) : Math.min(W * 0.24, H * 0.5)) * escala;
+    const sep = vertical ? W * 0.24 : Math.min(W * 0.19, base * 1.05);
     const ox = mirada.x * W * 0.1 + (bailando ? Math.sin(t * 4) * base * 0.12 : 0);
     const oy = mirada.y * H * 0.12 + (emocion === 'llanto' ? Math.abs(Math.sin(t * 7)) * base * 0.05 : 0) // sollozo
       - (bailando ? Math.abs(Math.sin(t * 8)) * base * 0.1 : 0); // baile (y sube para dejar lugar al video)
@@ -601,8 +610,10 @@
   // =====================================================================
   // SENSORES
   // =====================================================================
-  const sens = $('sens'); sens.value = cfg.sens;
-  sens.addEventListener('input', () => { cfg.sens = parseFloat(sens.value); guardar(); });
+  const sens = $('sens'); sens.value = cfg.fuerza;
+  sens.addEventListener('input', () => { cfg.fuerza = parseFloat(sens.value); guardar(); });
+  $('movOn').checked = cfg.movOn !== false;
+  $('movOn').addEventListener('change', e => { cfg.movOn = e.target.checked; guardar(); });
   const barra = document.querySelector('#medidor div'), marca = document.querySelector('#medidor span');
   let actividad = 0, tiempoAlto = 0, tiempoCaida = 0, tPrevio = 0, pausaSensor = 0, vioSensor = false;
   addEventListener('devicemotion', e => {
@@ -612,15 +623,15 @@
     const ahora = performance.now(), dt = tPrevio ? Math.min(100, ahora - tPrevio) : 16; tPrevio = ahora;
     const mag = Math.hypot(a.x, a.y, a.z), rr = e.rotationRate;
     const rot = rr ? Math.abs(rr.alpha || 0) + Math.abs(rr.beta || 0) + Math.abs(rr.gamma || 0) : 0;
-    actividad = actividad * 0.85 + (Math.abs(mag - 9.81) + rot / 90) * 0.15;
-    const umbral = 4.4 - cfg.sens;
-    barra.style.width = Math.min(100, actividad / 5 * 100) + '%';
-    marca.style.left = Math.min(100, umbral / 5 * 100) + '%';
-    if (ahora < pausaSensor || estado === 'escuchando') return;
-    tiempoCaida = mag < 3 ? tiempoCaida + dt : 0;
-    if (tiempoCaida > 60) { ponerEmocion('miedo', 2500); decirFrase('miedo'); pausaSensor = ahora + 2600; tiempoCaida = 0; return; }
+    actividad = actividad * 0.88 + (Math.abs(mag - 9.81) + rot / 150) * 0.12;
+    const umbral = cfg.fuerza || 4.5;
+    barra.style.width = Math.min(100, actividad / 10 * 100) + '%';
+    marca.style.left = Math.min(100, umbral / 10 * 100) + '%';
+    if (cfg.movOn === false || ahora < pausaSensor || estado === 'escuchando') return;
+    tiempoCaida = mag < 2.5 ? tiempoCaida + dt : 0;
+    if (tiempoCaida > 90) { ponerEmocion('miedo', 2500); decirFrase('miedo'); pausaSensor = ahora + 2600; tiempoCaida = 0; return; }
     tiempoAlto = actividad > umbral ? tiempoAlto + dt : Math.max(0, tiempoAlto - dt);
-    if (tiempoAlto > 350 && emocion !== 'mareado') { ponerEmocion('mareado', 3000); decirFrase('mareado'); pausaSensor = ahora + 3200; tiempoAlto = 0; }
+    if (tiempoAlto > 600 && emocion !== 'mareado') { ponerEmocion('mareado', 3000); decirFrase('mareado'); pausaSensor = ahora + 3200; tiempoAlto = 0; }
   });
   setTimeout(() => { if (!vioSensor) $('estadoSensor').textContent = 'Sensor: no llega señal (¿está abierto en Chrome?)'; }, 4000);
 
@@ -947,7 +958,8 @@ ${cfg.ensenanzas.trim().split('\n').filter(l => l.trim()).map(l => '- ' + l.trim
 ${listaCanciones().map((c, i) => `${i + 1}. ${c.nombre}`).join('\n')}
 Para poner una, terminá tu respuesta con la etiqueta [cancion:NÚMERO], por ejemplo [cancion:1]. Ponela cuando sea hora de juntar los juguetes o cuando la nena pida esa canción. No pongas música todo el tiempo.
 
-` : ''}A veces, junto con lo que dice la nena, vas a recibir una foto de lo que ve tu cámara (por ejemplo, cuando te muestra un juguete). Contale lo que ves con palabras simples y alegres, y preguntale algo sobre eso. Si en la foto aparecen personas, no describas su cuerpo ni su cara: concentrate en el objeto o en lo que te quiere mostrar. Si no se ve bien, pedile que te lo acerque.
+` : ''}${(cfg.camara) ? `Tenés una cámara: si para contestar necesitás VER algo (cuántos dedos muestra, qué tiene en la mano, de qué color es algo, etc.) y no recibiste foto, respondé SOLO con la etiqueta [foto] y nada más; el robot va a sacar una foto y te la va a mandar.
+` : ''}A veces, junto con lo que dice la nena, vas a recibir una foto de lo que ve tu cámara (por ejemplo, cuando te muestra un juguete). Contale lo que ves con palabras simples y alegres, y preguntale algo sobre eso. Si en la foto aparecen personas, no describas su cuerpo ni su cara: concentrate en el objeto o en lo que te quiere mostrar. Si te pregunta cuántos dedos muestra, contalos con cuidado. Si de verdad no se ve, pedile que lo ponga frente a la pantalla, un poquito más lejos y con luz.
 
 Si un mensaje empieza con "[Mensaje de los papás]", no lo dijo la nena: es algo que los papás quieren que le digas ahora. Decíselo vos, con tus palabras, de forma cariñosa y divertida (por ejemplo, como una misión o un juego), en una o dos frases.
 
@@ -1062,7 +1074,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
     let respuesta;
     // "¿Qué es esto?", "mirá", "¿qué ves?"... -> saca una foto para mostrársela a la IA
     let foto = null;
-    if (!dePapas && (cfg.camara || cam.on) && /(qu[eé] es esto|qu[eé] es eso|mir[aá]|qu[eé] ves|qu[eé] tengo|adivin|te muestro|ves esto|de qu[eé] color)/i.test(lo_que_dijo)) {
+    if (!dePapas && (cfg.camara || cam.on) && /(esto|eso|mir[aá]|ves\b|me ves|ver\b|tengo|adivin|muestr|color|cu[aá]nt|dedo|mano|ac[aá]|aqu[ií]|c[oó]mo estoy|qu[eé] hay|qui[eé]n)/i.test(lo_que_dijo)) {
       foto = await sacarFoto();
       if (foto) anotar('📷 (foto enviada a la IA, no se guarda)');
     }
@@ -1074,6 +1086,11 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
     }
     try {
       respuesta = await pedido;
+      // Si la IA necesita ver para contestar, pide [foto]: sacamos una y le volvemos a preguntar
+      if (!foto && /\[foto\]/i.test(respuesta) && (cfg.camara || cam.on)) {
+        foto = await sacarFoto();
+        if (foto) { anotar('📷 (foto enviada a la IA, no se guarda)'); respuesta = await preguntarIA(foto); }
+      }
     } catch (err) {
       historial.pop();
       const tipo = tipoDeError(err);
@@ -1212,18 +1229,26 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // PANTALLA COMPLETA Y PANTALLA ENCENDIDA
   // =====================================================================
+  async function aplicarOrientacion() {
+    try {
+      if (cfg.orientacion === 'libre') screen.orientation.unlock();
+      else await screen.orientation.lock(cfg.orientacion === 'horizontal' ? 'landscape' : 'portrait');
+    } catch (e) {}
+  }
   async function mantenerEncendida() {
     try { if ('wakeLock' in navigator) await navigator.wakeLock.request('screen'); } catch (e) {}
   }
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') mantenerEncendida(); });
   async function completa() {
     try { await document.documentElement.requestFullscreen({ navigationUI:'hide' }); } catch (e) {}
-    try { await screen.orientation.lock('landscape'); } catch (e) {}
+    aplicarOrientacion();
     mantenerEncendida();
   }
   $('inicio').addEventListener('pointerdown', ev => { ev.currentTarget.remove(); prepararAudio(); completa(); });
   $('mic').addEventListener('pointerdown', prepararAudio);
   $('btnFull').addEventListener('click', completa);
+  $('orientacion').value = cfg.orientacion || 'vertical';
+  $('orientacion').addEventListener('change', e => { cfg.orientacion = e.target.value; guardar(); aplicarOrientacion(); });
 
   // Permite instalar como app
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
@@ -1231,7 +1256,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '23';
+  const VERSION = '24';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
@@ -1261,7 +1286,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   let autoRecarga = false; try { autoRecarga = sessionStorage.getItem('robot_auto') === '1'; sessionStorage.removeItem('robot_auto'); } catch (e) {}
   if (comoApp || autoRecarga) {
     $('inicio')?.remove();
-    mantenerEncendida();
+    mantenerEncendida(); aplicarOrientacion();
     if (!comoApp) document.documentElement.requestFullscreen?.().catch(() => {});
     addEventListener('pointerdown', () => { prepararAudio(); mantenerEncendida(); }, { once:true });
   }
