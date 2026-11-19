@@ -95,6 +95,7 @@
     <button data-e="escuchando">Escucha</button>
     <button data-e="dormido">Dormido</button>
     <button data-e="llanto">Llanto</button>
+    <button data-e="enamorado">Enamorado</button>
   </div>
 
   <h4>Cerebro (IA)</h4>
@@ -154,6 +155,13 @@
   <div class="fila"><input id="ytPrueba" type="text" placeholder="Probar: ej. el sapo pepe"><button id="ytBuscar">🔎</button></div>
   <div class="fila"><button id="pararMusica" style="flex:1">⏹ Parar música</button></div>
 
+  <h4>Control remoto 📡</h4>
+  <label><input id="remoto" type="checkbox"> Recibir instrucciones desde otro celular o la compu</label>
+  <div style="font-size:12px;color:#9bc;margin-top:4px">Abrí este link en TU celular o compu para mandarle mensajes, enseñanzas y órdenes. Guardalo como secreto: el que tenga el link puede hacerlo hablar.</div>
+  <input id="linkRemoto" type="text" readonly style="margin-top:6px">
+  <div class="fila"><button id="copiarRemoto" style="flex:1">📋 Copiar link</button><button id="nuevoCanal" style="flex:1">🔄 Link nuevo</button></div>
+  <div id="estadoRemoto" style="font-size:12px;color:#7aa;margin-top:4px"></div>
+
   <h4>Charla de hoy</h4>
   <div id="charla"></div>
   <div class="fila"><button id="borrar">Borrar charla</button></div>
@@ -190,7 +198,7 @@
   };
   const cfg = {
     prov:'gemini', claves:{}, modelos:{}, nomRobot:'', nomNena:'',
-    tono:1.4, velocidad:1.0, orientacion:'vertical', fuerza:4.5, movOn:true, verMic:true, sens:1.6, repetir:true, loroTono:1.5, ensenanzas:'', camara:false, despertar:false, palabra:'Emo', youtube:false, ytClave:'',
+    tono:1.4, velocidad:1.0, orientacion:'vertical', fuerza:4.5, movOn:true, verMic:true, sens:1.6, repetir:true, loroTono:1.5, ensenanzas:'', camara:false, canal:'', remoto:true, despertar:false, palabra:'Emo', youtube:false, ytClave:'',
   };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem('robot_cfg') || '{}')); } catch (e) {}
   const guardar = () => { try { localStorage.setItem('robot_cfg', JSON.stringify(cfg)); } catch (e) {} };
@@ -236,7 +244,7 @@
     escuchando: { w:1.10, h:0.70, r:0.40, enojo:0,    preoc:0,    alegre:0, color:[80,255,150],  tiembla:0 },
     llanto:     { w:0.95, h:0.70, r:0.35, enojo:0,    preoc:0.55, alegre:0, color:[90,160,255],  tiembla:1 },
   };
-  const ESPECIALES = ['risa', 'cruz', 'mareado', 'dormido'];
+  const ESPECIALES = ['risa', 'cruz', 'mareado', 'dormido', 'enamorado'];
   const CLAVES_FORMA = ['w','h','r','enojo','preoc','alegre','tiembla'];
   const forma = { ...BASE.normal, color:[...CYAN] };
 
@@ -356,6 +364,21 @@
     }
     ctx.restore();
   }
+  // Ojos de corazón (enamorado), con rayitas como pantalla y latido
+  function ojoCorazon(cx, cy, w, h, t) {
+    const lat = 1 + 0.08 * Math.max(0, Math.sin(t * 7)) ** 3;
+    const s = Math.min(w, h) * 0.5 * lat, c = 'rgb(255,110,170)';
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(cx, cy + s * 0.95);
+    ctx.bezierCurveTo(cx - s * 1.5, cy + s * 0.05, cx - s * 0.95, cy - s * 1.05, cx, cy - s * 0.35);
+    ctx.bezierCurveTo(cx + s * 0.95, cy - s * 1.05, cx + s * 1.5, cy + s * 0.05, cx, cy + s * 0.95);
+    ctx.closePath();
+    ctx.shadowColor = c; ctx.shadowBlur = 28; ctx.fillStyle = c; ctx.fill();
+    ctx.clip(); ctx.shadowBlur = 0; ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    for (let y = cy - s * 1.1; y < cy + s; y += Math.max(4, s * 0.16)) ctx.fillRect(cx - s * 1.6, y, s * 3.2, Math.max(1.5, s * 0.05));
+    ctx.restore();
+  }
   function ojoRisa(cx, cy, w, h, t) {
     const color = rgb(forma.color), salto = Math.abs(Math.sin(t * 14)) * h * 0.08;
     brillo(color, 25); ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineWidth = w * 0.2;
@@ -438,7 +461,7 @@
     for (const k of CLAVES_FORMA) forma[k] = lerp(forma[k], obj[k] ?? 0, 0.18);
     for (let i = 0; i < 3; i++) forma.color[i] = lerp(forma.color[i], colorObj[i], 0.15);
 
-    const caraReciente = cam.cara && ahora - cam.cara.t < 1200 && ['normal','contento','escuchando','risa'].includes(emocion);
+    const caraReciente = cam.cara && ahora - cam.cara.t < 1200 && ['normal','contento','escuchando','risa','enamorado'].includes(emocion);
     if (!dedo && caraReciente) {
       mirada.tx = cam.cara.x; mirada.ty = cam.cara.y; proxMirada = ahora + 1500;
     } else if (dedo) {
@@ -488,6 +511,7 @@
       else if (emocion === 'cruz') ojoCruz(cx, cy, w, base, t);
       else if (emocion === 'mareado') ojoEspiral(cx, cy, w, base, t, lado);
       else if (emocion === 'dormido') ojoDormido(cx, cy, w, base);
+      else if (emocion === 'enamorado') ojoCorazon(cx, cy - base * 0.05, w * 0.95, base * 0.95, t);
       else ojoBase(cx, cy, w, h, lado, forma);
       if (emocion === 'escuchando') onditas(cx, cy, w, h, t, lado);
       if (emocion === 'llanto') lagrimas(cx, cy + base * forma.h * 0.35, base, t, lado);
@@ -1111,6 +1135,45 @@
   }
 
   // =====================================================================
+  // CONTROL REMOTO: recibe órdenes desde control.html por un canal secreto (ntfy.sh)
+  // =====================================================================
+  const nuevoCodigo = () => 'robot-' + Array.from(crypto.getRandomValues(new Uint8Array(18)), b => 'abcdefghijkmnpqrstuvwxyz23456789'[b % 32]).join('');
+  if (!cfg.canal) { cfg.canal = nuevoCodigo(); guardar(); }
+  let fuenteRemota = null;
+  const linkControl = () => location.origin + location.pathname.replace(/[^/]*$/, '') + 'control.html#canal=' + cfg.canal;
+  function conectarRemoto() {
+    try { fuenteRemota && fuenteRemota.close(); } catch (e) {}
+    fuenteRemota = null;
+    $('linkRemoto').value = linkControl();
+    if (cfg.remoto === false) { $('estadoRemoto').textContent = 'Apagado'; return; }
+    fuenteRemota = new EventSource('https://ntfy.sh/' + cfg.canal + '/sse');
+    fuenteRemota.onopen = () => { $('estadoRemoto').textContent = 'Conectado ✔ (esperando instrucciones)'; };
+    fuenteRemota.onerror = () => { $('estadoRemoto').textContent = 'Reconectando…'; };
+    fuenteRemota.onmessage = ev => {
+      let m; try { m = JSON.parse(JSON.parse(ev.data).message); } catch (e) { return; }
+      if (!m || !m.tipo) return;
+      recibirRemoto(m);
+    };
+  }
+  function recibirRemoto(m) {
+    const txt = String(m.texto || '').slice(0, 500);
+    anotar('📡 ' + m.tipo + (txt ? ': ' + txt : ''));
+    const despierto = () => { if (durmiendo) { durmiendo = false; cv.classList.remove('dormido'); } };
+    switch (m.tipo) {
+      case 'decir': despierto(); if (txt) { estado = 'pensando'; hablar(txt, m.cara || 'contento').then(() => { estado = 'libre'; seguirCharla(); }); } break;
+      case 'decirIA': despierto(); if (txt) { estado = 'libre'; conversar(txt, true); } break;
+      case 'ensenanzas': cfg.ensenanzas = txt; guardar(); $('ensenanzas').value = txt; break;
+      case 'cara': if (m.cara) ponerEmocion(m.cara, 4000); break;
+      case 'dormir': irADormir('dormido'); break;
+      case 'despertar': despertarse(); break;
+      case 'cancion': despierto(); ponerMusica(Math.max(0, (parseInt(m.numero, 10) || 1) - 1)); break;
+      case 'youtube': despierto(); if (txt) ponerYouTube(txt); break;
+      case 'pararMusica': terminarMusica(false); break;
+      case 'charla': despierto(); activarCharla(!!m.prender); break;
+    }
+  }
+
+  // =====================================================================
   // CEREBRO: la IA
   // =====================================================================
   let historial = [];
@@ -1151,7 +1214,7 @@ Si un mensaje empieza con "[Mensaje de los papás]", no lo dijo la nena: es algo
 
 Si te piden canciones para dormir o una canción que no tenés (y no podés buscar en YouTube), podés cantar vos una canción cortita inventada, con tus palabras.
 
-Formato: empezá SIEMPRE con una etiqueta de emoción entre corchetes y después el texto. Etiquetas: [contento] [risa] [sorpresa] [pensando] [triste] [llanto] [miedo] [enojado] [normal]. Usá [llanto], [enojado] y [miedo] solo jugando, en broma (por ejemplo, llorar de mentirita en un cuento).
+Formato: empezá SIEMPRE con una etiqueta de emoción entre corchetes y después el texto. Etiquetas: [contento] [risa] [sorpresa] [pensando] [triste] [llanto] [miedo] [enojado] [enamorado] [normal]. Usá [enamorado] (ojos de corazón) cuando la nena te dice algo lindo, que te quiere o te da un abrazo. Usá [llanto], [enojado] y [miedo] solo jugando, en broma (por ejemplo, llorar de mentirita en un cuento).
 Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   }
 
@@ -1240,7 +1303,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   }
 
   const EMOCIONES_IA = { contento:'contento', feliz:'contento', risa:'risa', sorpresa:'sorpresa', pensando:'pensando',
-    triste:'triste', llanto:'llanto', miedo:'miedo', enojado:'enojado', normal:'normal' };
+    triste:'triste', llanto:'llanto', enamorado:'enamorado', amor:'enamorado', miedo:'miedo', enojado:'enojado', normal:'normal' };
   function separar(respuesta) {
     const m = /^\s*\[([a-záéíóúñ]+)\]\s*/i.exec(respuesta);
     const emo = (m && EMOCIONES_IA[m[1].toLowerCase()]) || 'contento';
@@ -1404,6 +1467,14 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   });
   if (cfg.camara) setTimeout(() => prenderCamara(), 1500);
   $('cerrarMusica').addEventListener('click', () => terminarMusica(false));
+  $('remoto').checked = cfg.remoto !== false;
+  $('remoto').addEventListener('change', e => { cfg.remoto = e.target.checked; guardar(); conectarRemoto(); });
+  $('copiarRemoto').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(linkControl()); $('estadoRemoto').textContent = 'Link copiado ✔'; }
+    catch (e) { $('linkRemoto').select(); $('estadoRemoto').textContent = 'Seleccioná el link y copialo'; }
+  });
+  $('nuevoCanal').addEventListener('click', () => { cfg.canal = nuevoCodigo(); guardar(); conectarRemoto(); $('estadoRemoto').textContent = 'Link nuevo: el anterior ya no funciona'; });
+  conectarRemoto();
   $('ensenanzas').value = cfg.ensenanzas || '';
   $('ensenanzas').addEventListener('input', e => { cfg.ensenanzas = e.target.value; guardar(); });
   function enviarMensaje(aSuManera) {
@@ -1461,7 +1532,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '27';
+  const VERSION = '28';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
