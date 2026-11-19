@@ -173,6 +173,17 @@
   </label>
   <div id="medidor"><div></div><span></span></div>
   <div id="estadoSensor">Sensor: esperando movimiento…</div>
+  <label><input id="ventanaOn" type="checkbox"> Con carcasa: ojos solo en la ventana de la cabeza</label>
+  <label><input id="ventanaGuia" type="checkbox"> Mostrar el borde de la ventana (para ajustar)</label>
+  <label>Ventana: borde de arriba <span id="vArribaTxt"></span>
+    <input id="vArriba" type="range" min="0" max="0.4" step="0.005">
+  </label>
+  <label>Ventana: borde de abajo <span id="vAbajoTxt"></span>
+    <input id="vAbajo" type="range" min="0.15" max="0.7" step="0.005">
+  </label>
+  <label>Ventana: márgenes de los costados <span id="vLadoTxt"></span>
+    <input id="vLado" type="range" min="0" max="0.2" step="0.005">
+  </label>
   <label>Pantalla
     <select id="orientacion">
       <option value="vertical">Vertical (parado)</option>
@@ -198,7 +209,7 @@
   };
   const cfg = {
     prov:'gemini', claves:{}, modelos:{}, nomRobot:'', nomNena:'',
-    tono:1.4, velocidad:1.0, orientacion:'vertical', fuerza:4.5, movOn:true, verMic:true, sens:1.6, repetir:true, loroTono:1.5, ensenanzas:'', camara:false, canal:'', remoto:true, despertar:false, palabra:'Emo', youtube:false, ytClave:'',
+    tono:1.4, velocidad:1.0, orientacion:'vertical', ventanaOn:false, ventanaGuia:false, ventana:{ arriba:0.03, abajo:0.35, izq:0.03, der:0.03 }, fuerza:4.5, movOn:true, verMic:true, sens:1.6, repetir:true, loroTono:1.5, ensenanzas:'', camara:false, canal:'', remoto:true, despertar:false, palabra:'Emo', youtube:false, ytClave:'',
   };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem('robot_cfg') || '{}')); } catch (e) {}
   const guardar = () => { try { localStorage.setItem('robot_cfg', JSON.stringify(cfg)); } catch (e) {} };
@@ -447,9 +458,23 @@
     try { dibujar(ahora); } catch (e) { try { anotar('⚠ dibujo: ' + e.message); } catch (_) {} }
     requestAnimationFrame(cuadro);
   }
+  // Con la carcasa puesta solo se ve la parte de arriba de la pantalla: los ojos se dibujan dentro de esa "ventana"
+  function zonaVentana() {
+    const v = cfg.ventana || {};
+    return { x: W * (v.izq ?? 0.03), y: H * (v.arriba ?? 0.03), w: W * (1 - (v.izq ?? 0.03) - (v.der ?? 0.03)), h: H * ((v.abajo ?? 0.35) - (v.arriba ?? 0.03)) };
+  }
   function dibujar(ahora) {
     if (W !== innerWidth || H !== innerHeight) ajustar();
     if (W < 20 || H < 20) return; // pantalla en transición: esperar
+    if (!cfg.ventanaOn) return dibujarCara(ahora);
+    const W0 = W, H0 = H, z = zonaVentana();
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W0, H0);
+    ctx.save(); ctx.beginPath(); ctx.rect(z.x, z.y, z.w, z.h); ctx.clip(); ctx.translate(z.x, z.y);
+    W = z.w; H = z.h;
+    try { dibujarCara(ahora); } finally { ctx.restore(); W = W0; H = H0; }
+    if (cfg.ventanaGuia) { ctx.strokeStyle = '#ff4d4d'; ctx.lineWidth = 2; ctx.setLineDash([8, 6]); ctx.strokeRect(z.x, z.y, z.w, z.h); ctx.setLineDash([]); }
+  }
+  function dibujarCara(ahora) {
     // Si algún valor se rompió (NaN/infinito), lo reseteamos para que los ojos nunca desaparezcan
     if (![mirada.x, mirada.y, mirada.tx, mirada.ty].every(Number.isFinite)) { mirada.x = mirada.y = mirada.tx = mirada.ty = 0; }
     for (const k of CLAVES_FORMA) if (!Number.isFinite(forma[k])) forma[k] = BASE.normal[k];
@@ -1523,6 +1548,27 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   $('inicio').addEventListener('pointerdown', ev => { ev.currentTarget.remove(); prepararAudio(); completa(); });
   $('mic').addEventListener('pointerdown', prepararAudio);
   $('btnFull').addEventListener('click', completa);
+  // ---- ventana de la carcasa ----
+  cfg.ventana = Object.assign({ arriba:0.03, abajo:0.35, izq:0.03, der:0.03 }, cfg.ventana || {});
+  const pc = v => Math.round(v * 100) + '%';
+  function ubicarBotones() {
+    const on = !!cfg.ventanaOn, z = on ? zonaVentana() : null;
+    $('vArribaTxt').textContent = pc(cfg.ventana.arriba); $('vAbajoTxt').textContent = pc(cfg.ventana.abajo); $('vLadoTxt').textContent = pc(cfg.ventana.izq);
+    // con la carcasa, la parte de abajo de la pantalla queda tapada: los botones pasan a la ventana
+    $('engranaje').style.cssText = on ? `left:${z.x + z.w - 50}px; top:${z.y + 6}px; right:auto; bottom:auto` : '';
+    $('mic').style.cssText = on ? `left:${z.x + z.w / 2}px; top:${z.y + z.h - 62}px; bottom:auto; width:52px; height:52px; font-size:22px` : '';
+    $('loro').style.display = on ? 'none' : '';
+    $('cerrarMusica').style.cssText = on ? `left:${z.x + 8}px; top:${z.y + 6}px; right:auto; bottom:auto` : '';
+  }
+  $('ventanaOn').checked = !!cfg.ventanaOn; $('ventanaGuia').checked = !!cfg.ventanaGuia;
+  $('vArriba').value = cfg.ventana.arriba; $('vAbajo').value = cfg.ventana.abajo; $('vLado').value = cfg.ventana.izq;
+  $('ventanaOn').addEventListener('change', e => { cfg.ventanaOn = e.target.checked; guardar(); ubicarBotones(); });
+  $('ventanaGuia').addEventListener('change', e => { cfg.ventanaGuia = e.target.checked; guardar(); });
+  $('vArriba').addEventListener('input', e => { cfg.ventana.arriba = +e.target.value; if (cfg.ventana.abajo < cfg.ventana.arriba + 0.1) cfg.ventana.abajo = cfg.ventana.arriba + 0.1; guardar(); ubicarBotones(); });
+  $('vAbajo').addEventListener('input', e => { cfg.ventana.abajo = Math.max(+e.target.value, cfg.ventana.arriba + 0.1); guardar(); ubicarBotones(); });
+  $('vLado').addEventListener('input', e => { cfg.ventana.izq = cfg.ventana.der = +e.target.value; guardar(); ubicarBotones(); });
+  addEventListener('resize', ubicarBotones);
+  ubicarBotones();
   $('orientacion').value = cfg.orientacion || 'vertical';
   $('orientacion').addEventListener('change', e => { cfg.orientacion = e.target.value; guardar(); aplicarOrientacion(); });
 
@@ -1532,7 +1578,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '28';
+  const VERSION = '29';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
