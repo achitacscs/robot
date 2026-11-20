@@ -461,7 +461,7 @@
   // Con la carcasa puesta solo se ve la parte de arriba de la pantalla: los ojos se dibujan dentro de esa "ventana"
   function zonaVentana() {
     const v = cfg.ventana || {};
-    return { x: W * (v.izq ?? 0.03), y: H * (v.arriba ?? 0.03), w: W * (1 - (v.izq ?? 0.03) - (v.der ?? 0.03)), h: H * ((v.abajo ?? 0.35) - (v.arriba ?? 0.03)) };
+    return { x: W * (v.izq ?? 0.02), y: H * (v.arriba ?? 0.02), w: W * (1 - (v.izq ?? 0.02) - (v.der ?? 0.02)), h: H * ((v.abajo ?? 0.44) - (v.arriba ?? 0.02)) };
   }
   function dibujar(ahora) {
     if (W !== innerWidth || H !== innerHeight) ajustar();
@@ -1549,7 +1549,9 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   $('mic').addEventListener('pointerdown', prepararAudio);
   $('btnFull').addEventListener('click', completa);
   // ---- ventana de la carcasa ----
-  cfg.ventana = Object.assign({ arriba:0.03, abajo:0.35, izq:0.03, der:0.03 }, cfg.ventana || {});
+  // ventana de la carcasa (versión 2: 72 x 64 mm, arriba de la pantalla)
+  if (cfg.ventanaVer !== 2) { cfg.ventana = { arriba:0.02, abajo:0.44, izq:0.02, der:0.02 }; cfg.ventanaVer = 2; guardar(); }
+  cfg.ventana = Object.assign({ arriba:0.02, abajo:0.44, izq:0.02, der:0.02 }, cfg.ventana || {});
   const pc = v => Math.round(v * 100) + '%';
   function ubicarBotones() {
     const on = !!cfg.ventanaOn, z = on ? zonaVentana() : null;
@@ -1578,7 +1580,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '29';
+  const VERSION = '30';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
