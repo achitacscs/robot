@@ -28,6 +28,7 @@
   #musica { position:fixed; left:50%; bottom:86px; transform:translateX(-50%); width:min(70vw, 60vh); aspect-ratio:16/9;
     border:3px solid #46c3ff88; border-radius:14px; overflow:hidden; background:#000; z-index:3; display:none; }
   #musica.visible { display:block; }
+  #musica.soloAudio { opacity:0; pointer-events:none; width:200px; height:200px; aspect-ratio:auto; left:0; bottom:0; transform:none; z-index:-1; }
   #musica iframe { width:100%; height:100%; border:0; }
   .cancion { display:flex; align-items:center; gap:6px; margin-top:6px; font-size:14px; }
   .cancion span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -1053,6 +1054,27 @@
     anotar('🎵 ' + reg.nombre);
     try { await audio.play(); } catch (e) { terminarMusica(false); mostrarError('No se pudo reproducir: ' + e.message); }
   }
+  // ---- Canciones fijas de YouTube (suenan sin video). Cada una tiene varios links por si alguno falla ----
+  const TEMAS = [
+    { nombre:'A guardar, a guardar (juntar los juguetes)', ids:['HCynKopZ6Z4','SexxNS3WSuo','nl5pAReZRo8'] },
+    { nombre:'Arrorró mi niño (para dormir)', ids:['08MGTBoiOdM','rkNLgL6v2ww'] },
+    { nombre:'Estrellita, ¿dónde estás? (para dormir)', ids:['yjNJSA7QwUc','qDUfm2_beKE'] },
+    { nombre:'Nanas para dormir de Luli Pampín (larga, para dormir)', ids:['91F4AwL79Qw','YRb1HFVeQ1k'] },
+    { nombre:'A cepillarnos los dientes', ids:['Rp6MJPzB2nE','UZO4RKMrVh8','AWguhVw8qf0'] },
+    { nombre:'Lavate las manos', ids:['OOfJItOYIrw','P2evIdfrU2s'] },
+    { nombre:'El sapo Pepe', ids:['VMl0GbiVEyA','AeKT1wPCawY'] },
+    { nombre:'La vaca Lola', ids:['eNLjdPI9zdE','7xmCmIcCRbg'] },
+    { nombre:'Los pollitos dicen', ids:['iG9hUKTz8E0','6rLH7SQXMeU'] },
+    { nombre:'Saco una manito', ids:['_4MbJkxsLd4','ub7GYQvPTPw'] },
+    { nombre:'Manuelita la tortuga', ids:['2IAZ5SdxEas','eYt-E6XznTs'] },
+    { nombre:'La reina Batata', ids:['wXygfzvOYBo','izM0Zw46_xM'] },
+    { nombre:'El twist del mono liso', ids:['oCpIS0oZkpE','7oIDxGabrnw'] },
+  ];
+  window.ponerTema = n => ponerTema(n);
+  function ponerTema(n) {
+    const t = TEMAS[n]; if (!t) return;
+    reproducirYT(t.ids.map(id => ({ id, titulo:t.nombre })), false);
+  }
   // ---- YouTube (opcional): busca la canción y la pone con el video ----
   let yt = null, ytListo = null;
   function cargarYT() {
@@ -1082,12 +1104,16 @@
       mostrarError('YouTube: ' + txt); anotar('⚠ YouTube: ' + txt);
       await hablar('Uy, no pude encontrar esa canción.', 'triste'); seguirCharla(); return;
     }
+    reproducirYT(res, true);
+  }
+  async function reproducirYT(res, conVideo) {
     if (modoCharla) { charlaPausada = true; activarCharla(false); }
     if (modoLoro) activarLoro(false);
-    let idx = 0;
+    try { audio.pause(); } catch (e) {}
+    $('musica').classList.toggle('soloAudio', !conVideo);
     $('musica').classList.add('visible'); $('cerrarMusica').style.display = 'block';
     bailando = true; ponerEmocion('contento', 3600000);
-    anotar('🎵 YouTube: ' + res[0].titulo);
+    anotar('🎵 ' + res[0].titulo);
     await cargarYT();
     if (yt) { yt.loadVideoById(res[0].id); yt.__lista = res; yt.__idx = 0; return; }
     yt = new YT.Player('ytPlayer', {
@@ -1193,6 +1219,7 @@
       case 'despertar': despertarse(); break;
       case 'cancion': despierto(); ponerMusica(Math.max(0, (parseInt(m.numero, 10) || 1) - 1)); break;
       case 'youtube': despierto(); if (txt) ponerYouTube(txt); break;
+      case 'tema': despierto(); ponerTema(Math.max(0, (parseInt(m.numero, 10) || 1) - 1)); break;
       case 'pararMusica': terminarMusica(false); break;
       case 'charla': despierto(); activarCharla(!!m.prender); break;
     }
@@ -1230,7 +1257,11 @@ ${cfg.ensenanzas.trim().split('\n').filter(l => l.trim()).map(l => '- ' + l.trim
 ${listaCanciones().map((c, i) => `${i + 1}. ${c.nombre}`).join('\n')}
 Para poner una, terminá tu respuesta con la etiqueta [cancion:NÚMERO], por ejemplo [cancion:1]. Ponela cuando sea hora de juntar los juguetes o cuando la nena pida esa canción. No pongas música todo el tiempo.
 
-` : ''}${cfg.youtube && cfg.ytClave ? `Podés buscar canciones infantiles en YouTube: si la nena te pide una canción (que no esté en la lista de arriba), contestale cortito y terminá con la etiqueta [youtube:NOMBRE DE LA CANCIÓN], por ejemplo [youtube:el sapo pepe]. Solo canciones infantiles apropiadas para una nena de 4 años; si pide algo que no es para chicos, proponé otra canción infantil.
+` : ''}Canciones de YouTube que podés poner (suenan sin video):
+${TEMAS.map((t, i) => `${i + 1}. ${t.nombre}`).join('\n')}
+Para poner una, terminá tu respuesta con la etiqueta [tema:NÚMERO], por ejemplo [tema:1]. Si la nena (o los papás) te piden una de estas, ponela. Cuando sea hora de juntar los juguetes, poné "A guardar". Para dormir, una de las de dormir. No pongas música todo el tiempo.
+
+${cfg.youtube && cfg.ytClave ? `Podés buscar canciones infantiles en YouTube: si la nena te pide una canción (que no esté en la lista de arriba), contestale cortito y terminá con la etiqueta [youtube:NOMBRE DE LA CANCIÓN], por ejemplo [youtube:el sapo pepe]. Solo canciones infantiles apropiadas para una nena de 4 años; si pide algo que no es para chicos, proponé otra canción infantil.
 
 ` : ''}${(cfg.camara) ? `Tenés una cámara: si para contestar necesitás VER algo (cuántos dedos muestra, qué tiene en la mano, de qué color es algo, etc.) y no recibiste foto, respondé SOLO con la etiqueta [foto] y nada más; el robot va a sacar una foto y te la va a mandar.
 ` : ''}A veces, junto con lo que dice la nena, vas a recibir una foto de lo que ve tu cámara (por ejemplo, cuando te muestra un juguete). Contale lo que ves con palabras simples y alegres, y preguntale algo sobre eso. Si en la foto aparecen personas, no describas su cuerpo ni su cara: concentrate en el objeto o en lo que te quiere mostrar. Si te pregunta cuántos dedos muestra, contalos con cuidado. Si de verdad no se ve, pedile que lo ponga frente a la pantalla, un poquito más lejos y con luz.
@@ -1334,11 +1365,13 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
     const emo = (m && EMOCIONES_IA[m[1].toLowerCase()]) || 'contento';
     const mc = /\[canci[oó]n:\s*(\d+)\s*\]/i.exec(respuesta);
     const cancion = mc ? parseInt(mc[1], 10) - 1 : -1;
+    const mt = /\[tema:\s*(\d+)\s*\]/i.exec(respuesta);
+    const tema = mt ? parseInt(mt[1], 10) - 1 : -1;
     const my = /\[youtube:\s*([^\]]+)\]/i.exec(respuesta);
     const youtube = my ? my[1].trim() : '';
     const texto = respuesta.replace(/\[[^\]]*\]/g, '').replace(/[*_#~`>]/g, '')
       .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '').replace(/\s+/g, ' ').trim();
-    return { emo, texto, cancion, youtube };
+    return { emo, texto, cancion, youtube, tema };
   }
 
   async function conversar(lo_que_dijo, dePapas = false) {
@@ -1380,13 +1413,14 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
       seguirCharla();
       return;
     }
-    const { emo, texto, cancion, youtube } = separar(respuesta);
+    const { emo, texto, cancion, youtube, tema } = separar(respuesta);
     if (!texto) { historial.pop(); estado = 'libre'; await hablar('Mmm, me olvidé lo que iba a decir.', 'pensando'); seguirCharla(); return; }
     historial.push({ role:'assistant', content:respuesta.trim() });
     anotar('🤖 ' + texto);
     estado = 'libre';
     await hablar(texto, emo);
     if (cancion >= 0) { ponerMusica(cancion); return; }
+    if (tema >= 0) { ponerTema(tema); return; }
     if (youtube && cfg.youtube) { ponerYouTube(youtube); return; }
     seguirCharla();
   }
@@ -1580,7 +1614,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '30';
+  const VERSION = '31';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {

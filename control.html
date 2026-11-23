@@ -58,6 +58,7 @@
       <button data-orden="dormir">💤 Dormir</button>
       <button data-orden="despertar">☀️ Despertar</button>
       <button data-orden="charlaOn">🎤 Charlar</button>
+      <button data-orden="aGuardar">🧸 A guardar</button>
       <button data-orden="cancion1">🎵 Canción 1</button>
       <button data-orden="pararMusica">⏹ Parar música</button>
       <button data-orden="charlaOff">🔇 Dejar de escuchar</button>
@@ -120,7 +121,7 @@
   const ORDENES = {
     dormir:[{ tipo:'dormir' }, 'Dormir'], despertar:[{ tipo:'despertar' }, 'Despertar'],
     charlaOn:[{ tipo:'charla', prender:true }, 'Charlar'], charlaOff:[{ tipo:'charla', prender:false }, 'Dejar de escuchar'],
-    cancion1:[{ tipo:'cancion', numero:1 }, 'Canción 1'], pararMusica:[{ tipo:'pararMusica' }, 'Parar música'],
+    aGuardar:[{ tipo:'tema', numero:1 }, 'A guardar'], cancion1:[{ tipo:'cancion', numero:1 }, 'Canción 1'], pararMusica:[{ tipo:'pararMusica' }, 'Parar música'],
   };
   document.querySelectorAll('[data-orden]').forEach(b => b.addEventListener('click', () => { const [o, d] = ORDENES[b.dataset.orden]; enviar(o, d); }));
   document.querySelectorAll('[data-cara]').forEach(b => b.addEventListener('click', () => enviar({ tipo:'cara', cara:b.dataset.cara }, 'Cara: ' + b.dataset.cara)));
