@@ -112,6 +112,13 @@
   <label>Modelo <input id="modelo" type="text" autocomplete="off"></label>
   <label>Nombre del robot <input id="nomRobot" type="text" placeholder="Bipo"></label>
   <label>Nombre de la nena (opcional) <input id="nomNena" type="text" placeholder="sin nombre"></label>
+  <details id="vocesBox" style="margin-top:10px"><summary style="font-weight:bold">🗣 Reconocer quién habla</summary>
+    <div class="nota">Cada uno graba su voz una vez (tocá 🎙 y decí una frase larga durante 5 segundos, con voz normal). Así el robot sabe si le habla la nena o un grande. Con 2 o 3 grabaciones por persona reconoce mejor. El audio no se guarda ni se manda: solo se guardan unos números del tono de voz.</div>
+    <label><input id="vocesOn" type="checkbox"> Reconocer quién habla</label>
+    <div id="listaVoces"></div>
+    <div class="fila"><button id="agregarVoz">➕ Agregar persona</button><button id="probarQuien">🔎 ¿Quién soy?</button></div>
+    <div id="estadoVoces" class="nota"></div>
+  </details>
   <label>Voz <select id="voz"><option value="">Automática (español)</option></select></label>
   <div class="fila"><button id="vozNena" style="flex:1">👧 Voz de nena</button><button id="vozRobot" style="flex:1">🤖 Voz de robot</button></div>
   <label><input id="bips" type="checkbox"> Bip-bup antes de hablar</label>
@@ -210,12 +217,14 @@
   };
   const cfg = {
     prov:'gemini', claves:{}, modelos:{}, nomRobot:'', nomNena:'',
-    tono:1.4, velocidad:1.0, orientacion:'vertical', ventanaOn:false, ventanaGuia:false, ventana:{ arriba:0.03, abajo:0.35, izq:0.03, der:0.03 }, fuerza:4.5, movOn:true, verMic:true, sens:1.6, repetir:true, loroTono:1.5, ensenanzas:'', camara:false, canal:'', remoto:true, despertar:false, palabra:'Emo', youtube:false, ytClave:'',
+    tono:1.4, velocidad:1.0, orientacion:'vertical', ventanaOn:false, ventanaGuia:false, ventana:{ arriba:0.03, abajo:0.35, izq:0.03, der:0.03 }, fuerza:4.5, movOn:true, verMic:true, sens:1.6, repetir:true, loroTono:1.5, ensenanzas:'', camara:false, canal:'', remoto:true, despertar:false, palabra:'Emo', voces:null, vocesOn:true, youtube:false, ytClave:'',
   };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem('robot_cfg') || '{}')); } catch (e) {}
   const guardar = () => { try { localStorage.setItem('robot_cfg', JSON.stringify(cfg)); } catch (e) {} };
   // escuchar siempre la palabra "Emo" (activado de fábrica desde la versión 33)
   if (!cfg.despertarVer) { cfg.despertar = true; cfg.despertarVer = 1; guardar(); }
+  if (!cfg.nomNena) cfg.nomNena = 'Alma';
+  if (!Array.isArray(cfg.voces)) { cfg.voces = [ { nombre:cfg.nomNena || 'Alma', tipo:'nena' }, { nombre:'Mamá', tipo:'grande' }, { nombre:'Papá', tipo:'grande' } ]; guardar(); }
   // Link de configuración: .../robot/#clave=XXXX guarda la clave en este celular y la borra de la dirección.
   // (lo que va después de # no viaja a ningún servidor ni queda en el código publicado)
   (() => {
@@ -833,6 +842,11 @@
         'language-not-supported': 'El celular no tiene el español para reconocer voz.',
       };
       if (e.error === 'no-speech' || e.error === 'aborted') return;
+      if (e.error === 'audio-capture' && oido.stream) { // este celular no deja usar el micrófono dos veces a la vez
+        apagarOido(); cfg.vocesOn = false; guardar(); $('vocesOn').checked = false;
+        mostrarError('Este celular no deja reconocer voces y escuchar al mismo tiempo. Apagué "Reconocer quién habla".');
+        anotar('⚠ reconocer voces apagado (micrófono ocupado)'); return;
+      }
       const txt = MSJ[e.error] || ('Micrófono: ' + e.error);
       avisoIA(txt); anotar('⚠ mic: ' + e.error); mostrarError(txt);
       if (['not-allowed','service-not-allowed','audio-capture','language-not-supported'].includes(e.error) && modoCharla) activarCharla(false);
@@ -847,6 +861,7 @@
     };
     dedo = null; mirada.tx = 0; mirada.ty = 0;
     estado = 'escuchando'; ponerEmocion('escuchando', 15000);
+    prenderOido();
     try { reconocedor.start(); } catch (err) { estado = 'libre'; ponerEmocion('normal'); }
   }
 
@@ -881,6 +896,7 @@
     if (!SR) return;
     if (modoCharla || modoLoro || bailando || estado !== 'libre' || document.hidden || hablandoAnim) { timerEspera = setTimeout(esperarNombre, 1500); return; }
     let llamado = false;
+    prenderOido();
     recEspera = new SR();
     recEspera.lang = 'es-AR'; recEspera.continuous = true; recEspera.interimResults = true;
     recEspera.onresult = e => {
@@ -910,6 +926,131 @@
     try { recEspera.start(); } catch (e) { timerEspera = setTimeout(esperarNombre, 2000); }
   }
   function pararEspera() { clearTimeout(timerEspera); try { recEspera && recEspera.abort(); } catch (e) {} recEspera = null; }
+
+  // =====================================================================
+  // RECONOCER QUIÉN HABLA: mide el tono y el "color" de la voz mientras escucha
+  // y lo compara con las voces grabadas. No guarda audio: solo unos números.
+  // =====================================================================
+  const oido = { stream:null, frames:[], grab:null, prendiendo:null };
+  const NB = 16; // bandas de frecuencia
+  function hayVocesGrabadas() { return (cfg.voces || []).some(v => v.f0); }
+  function prenderOido(forzar) {
+    if (oido.stream) return Promise.resolve(true);
+    if (!forzar && (!cfg.vocesOn || !hayVocesGrabadas())) return Promise.resolve(false);
+    if (oido.prendiendo) return oido.prendiendo;
+    oido.prendiendo = (async () => {
+      try {
+        prepararAudio();
+        const stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:false, autoGainControl:false } });
+        const ctx = audioCtx, sr = ctx.sampleRate;
+        const fuente = ctx.createMediaStreamSource(stream);
+        const an = ctx.createAnalyser(); an.fftSize = 2048; an.smoothingTimeConstant = 0;
+        const proc = ctx.createScriptProcessor(2048, 1, 1);
+        const mudo = ctx.createGain(); mudo.gain.value = 0;
+        fuente.connect(an); fuente.connect(proc); proc.connect(mudo).connect(ctx.destination);
+        const espectro = new Float32Array(an.frequencyBinCount);
+        // límites de las bandas (100 a 5000 Hz, espaciadas en escala logarítmica)
+        const lim = []; for (let i = 0; i <= NB; i++) lim.push(Math.round(100 * Math.pow(50, i / NB) / (sr / 2) * an.frequencyBinCount));
+        let piso = 0.005;
+        proc.onaudioprocess = e => {
+          const grabando = !!oido.grab;
+          const atento = grabando || ((estado === 'escuchando' || recEspera) && !hablandoAnim && !bailando && !(window.speechSynthesis && speechSynthesis.speaking));
+          if (!atento) return;
+          const d = e.inputBuffer.getChannelData(0);
+          let suma = 0; for (let i = 0; i < d.length; i++) suma += d[i] * d[i];
+          const rms = Math.sqrt(suma / d.length);
+          if (rms < Math.max(0.006, piso * 2.5)) { piso = piso * 0.97 + rms * 0.03; return; }
+          const f0 = tonoDe(d, sr); if (!f0) return;
+          an.getFloatFrequencyData(espectro);
+          const b = []; for (let i = 0; i < NB; i++) { let m = 0, n = 0; for (let k = lim[i]; k < Math.max(lim[i] + 1, lim[i + 1]); k++) { m += Math.max(-120, espectro[k]); n++; } b.push(m / n); }
+          const media = b.reduce((a, x) => a + x, 0) / NB;
+          const fr = { t:performance.now(), f0, b:b.map(x => x - media) };
+          if (grabando) oido.grab.push(fr);
+          else { oido.frames.push(fr); if (oido.frames.length > 400) oido.frames.splice(0, 100); }
+        };
+        oido.stream = stream; oido.partes = [fuente, an, proc];
+        return true;
+      } catch (e) { anotar('⚠ reconocer voces: ' + e.name); return false; }
+      finally { oido.prendiendo = null; }
+    })();
+    return oido.prendiendo;
+  }
+  function apagarOido() {
+    if (!oido.stream) return;
+    try { oido.partes.forEach(n => n.disconnect()); oido.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+    oido.stream = null; oido.frames = [];
+  }
+  // Tono (frecuencia fundamental) por autocorrelación, entre 70 y 600 Hz
+  function tonoDe(d, sr) {
+    const x = []; for (let i = 0; i + 1 < d.length; i += 2) x.push((d[i] + d[i + 1]) / 2); // baja a la mitad
+    const fs = sr / 2, n = x.length, lMin = Math.floor(fs / 600), lMax = Math.min(n - 10, Math.ceil(fs / 70));
+    let e0 = 0; for (let i = 0; i < n; i++) e0 += x[i] * x[i];
+    if (e0 <= 0) return null;
+    let mejor = 0, lag = 0;
+    const c = new Float32Array(lMax + 2);
+    for (let l = lMin; l <= lMax + 1; l++) { let s = 0; for (let i = 0; i + l < n; i++) s += x[i] * x[i + l]; c[l] = s / e0; }
+    for (let l = lMin + 1; l <= lMax; l++) if (c[l] > c[l - 1] && c[l] >= c[l + 1] && c[l] > mejor) { mejor = c[l]; lag = l; }
+    if (mejor < 0.45 || !lag) return null;
+    // si hay un pico casi igual en la mitad del retardo, es el tono verdadero (evita confundir octavas)
+    const medio = Math.round(lag / 2); if (medio >= lMin && c[medio] > mejor * 0.85) lag = medio;
+    return fs / lag;
+  }
+  const mediana = a => { const o = [...a].sort((p, q) => p - q); return o[Math.floor(o.length / 2)]; };
+  function resumir(frames) {
+    const b = new Array(NB).fill(0); frames.forEach(f => f.b.forEach((x, i) => b[i] += x / frames.length));
+    return { f0:mediana(frames.map(f => f.f0)), b };
+  }
+  function distanciaVoz(r, v) {
+    const dt = Math.abs(Math.log(r.f0 / v.f0));
+    let db = 0; for (let i = 0; i < NB; i++) db += Math.abs(r.b[i] - v.b[i]); db /= NB;
+    return dt * 2.5 + db / 8;
+  }
+  // ¿Quién habló en los últimos segundos?
+  function quienHabla(ms = 7000) {
+    if (!oido.stream || !cfg.vocesOn) return null;
+    const ahora = performance.now();
+    const fr = oido.frames.filter(f => ahora - f.t < ms);
+    if (fr.length < 5) return null;
+    const r = resumir(fr);
+    let mejor = null, dm = 1e9;
+    for (const v of cfg.voces) { if (!v.f0) continue; const dd = distanciaVoz(r, v); if (dd < dm) { dm = dd; mejor = v; } }
+    if (!mejor) return null;
+    return { nombre:mejor.nombre, tipo:mejor.tipo, seguro:dm < 0.9, dist:dm, f0:r.f0 };
+  }
+  async function grabarVoz(i) {
+    const v = cfg.voces[i]; if (!v) return;
+    const est = $('estadoVoces');
+    if (!(await prenderOido(true))) { est.textContent = 'No pude usar el micrófono.'; return; }
+    pararEspera();
+    est.textContent = `🎙 ${v.nombre}: hablá ahora, con voz normal… (5 segundos)`;
+    oido.grab = [];
+    await new Promise(r => setTimeout(r, 5000));
+    const fr = oido.grab; oido.grab = null;
+    if (fr.length < 15) { est.textContent = 'No se escuchó bien. Probá de nuevo, más cerca y hablando más tiempo.'; timerEspera = setTimeout(esperarNombre, 800); return; }
+    const r = resumir(fr), n = v.n || 0;
+    v.f0 = v.f0 ? Math.exp((Math.log(v.f0) * n + Math.log(r.f0)) / (n + 1)) : r.f0;
+    v.b = v.b ? v.b.map((x, k) => (x * n + r.b[k]) / (n + 1)) : r.b;
+    v.n = n + 1; guardar(); pintarVoces();
+    est.textContent = `✅ Listo: voz de ${v.nombre} grabada (${v.n} ${v.n === 1 ? 'vez' : 'veces'}, tono ${Math.round(r.f0)} Hz).`;
+    if (!cfg.vocesOn || !hayVocesGrabadas()) apagarOido();
+    timerEspera = setTimeout(esperarNombre, 800);
+  }
+  function pintarVoces() {
+    const cont = $('listaVoces'); cont.innerHTML = '';
+    cfg.voces.forEach((v, i) => {
+      const f = document.createElement('div'); f.className = 'fila'; f.style.marginTop = '6px';
+      f.innerHTML = `<input type="text" style="flex:1;min-width:0" value=""><select><option value="nena">nena</option><option value="grande">grande</option></select><button title="Grabar">🎙</button><button title="Borrar">🗑</button>`;
+      const [inp, sel, bG, bB] = f.children;
+      inp.value = v.nombre; sel.value = v.tipo;
+      inp.addEventListener('input', () => { v.nombre = inp.value.trim() || 'Sin nombre'; guardar(); });
+      sel.addEventListener('change', () => { v.tipo = sel.value; guardar(); });
+      bG.addEventListener('click', () => grabarVoz(i));
+      bB.addEventListener('click', () => { if (v.f0) { delete v.f0; delete v.b; v.n = 0; } else cfg.voces.splice(i, 1); guardar(); pintarVoces(); });
+      const nota = document.createElement('div'); nota.className = 'nota';
+      nota.textContent = v.f0 ? `✓ grabada ${v.n} ${v.n === 1 ? 'vez' : 'veces'} (tono ${Math.round(v.f0)} Hz) — 🗑 borra la grabación` : 'sin grabar — tocá 🎙';
+      cont.appendChild(f); cont.appendChild(nota);
+    });
+  }
 
   // =====================================================================
   // MODO LORO: graba lo que dice la nena y lo repite con voz de ardilla.
@@ -1311,7 +1452,9 @@ ${cfg.youtube && cfg.ytClave ? `Podés buscar canciones infantiles en YouTube: s
 ` : ''}${(cfg.camara) ? `Tenés una cámara: si para contestar necesitás VER algo (cuántos dedos muestra, qué tiene en la mano, de qué color es algo, etc.) y no recibiste foto, respondé SOLO con la etiqueta [foto] y nada más; el robot va a sacar una foto y te la va a mandar.
 ` : ''}A veces, junto con lo que dice la nena, vas a recibir una foto de lo que ve tu cámara (por ejemplo, cuando te muestra un juguete). Contale lo que ves con palabras simples y alegres, y preguntale algo sobre eso. Si en la foto aparecen personas, no describas su cuerpo ni su cara: concentrate en el objeto o en lo que te quiere mostrar. Si te pregunta cuántos dedos muestra, contalos con cuidado. Si de verdad no se ve, pedile que lo ponga frente a la pantalla, un poquito más lejos y con luz.
 
-Si un mensaje empieza con "[Mensaje de los papás]", no lo dijo la nena: es algo que los papás quieren que le digas ahora. Decíselo vos, con tus palabras, de forma cariñosa y divertida (por ejemplo, como una misión o un juego), en una o dos frases.
+${hayVocesGrabadas() && cfg.vocesOn ? `El robot reconoce las voces de la familia: ${cfg.voces.filter(v => v.f0).map(v => v.nombre + (v.tipo === 'grande' ? ' (grande)' : ' (nena)')).join(', ')}. Cuando un mensaje empieza con "[Habla: NOMBRE]", es esa persona la que te habla. Si habla un grande, NO lo confundas con la nena: contestale a ese grande, llamalo por su nombre, y podés responder preguntas de grandes (cuentas, datos, el clima, etc.) en forma corta y amable, sin perder tu personalidad de robot. Si no viene esa etiqueta, no sabés bien quién habla: si por lo que dice parece un grande, tratalo como grande; si no, como la nena.
+
+` : ''}Si un mensaje empieza con "[Mensaje de los papás]", no lo dijo la nena: es algo que los papás quieren que le digas ahora. Decíselo vos, con tus palabras, de forma cariñosa y divertida (por ejemplo, como una misión o un juego), en una o dos frases.
 
 Si te piden canciones para dormir o una canción que no tenés (y no podés buscar en YouTube), podés cantar vos una canción cortita inventada, con tus palabras.
 
@@ -1442,12 +1585,14 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
     lo_que_dijo = (lo_que_dijo || '').trim();
     if (!lo_que_dijo) { estado = 'libre'; return; }
     if (!dePapas && comando(lo_que_dijo)) { anotar('👧 ' + lo_que_dijo + '  (comando)'); return; }
+    const quien = dePapas ? null : quienHabla();
     if (dePapas) lo_que_dijo = '[Mensaje de los papás] ' + lo_que_dijo;
+    else if (quien && quien.seguro) lo_que_dijo = `[Habla: ${quien.nombre}${quien.tipo === 'grande' ? ' (un grande)' : ' (la nena)'}] ` + lo_que_dijo;
     const cuenta = resolverCuenta(lo_que_dijo);
     estado = 'pensando'; ponerEmocion('pensando', 30000);
     historial.push({ role:'user', content: cuenta ? lo_que_dijo + '  [Resultado calculado: ' + cuenta + ']' : lo_que_dijo });
     while (historial.length > MAX_MENSAJES) historial.splice(0, 2);
-    anotar((dePapas ? '👨 ' : '👧 ') + lo_que_dijo.replace('[Mensaje de los papás] ', ''));
+    anotar((dePapas ? '👨 ' : quien && quien.seguro ? (quien.tipo === 'grande' ? '🧑 ' : '👧 ') : '❔ ') + lo_que_dijo.replace(/^\[[^\]]*\] /, '') + (quien ? `  (${quien.seguro ? '' : '¿'}${quien.nombre}${quien.seguro ? '' : '?'}, ${Math.round(quien.f0)} Hz)` : ''));
     let respuesta;
     // "¿Qué es esto?", "mirá", "¿qué ves?"... -> saca una foto para mostrársela a la IA
     let foto = null;
@@ -1457,8 +1602,8 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
     }
     const pedido = preguntarIA(foto); pedido.catch(() => {});
     // A veces la imita (voz finita) mientras la IA piensa la respuesta
-    if (!dePapas && cfg.repetir && lo_que_dijo.length <= 70 && Math.random() < 0.3) {
-      await hablar(lo_que_dijo, 'risa', { pitch:2, rate:1.15, sinBips:true });
+    if (!dePapas && cfg.repetir && !(quien && quien.seguro && quien.tipo === 'grande') && lo_que_dijo.length <= 90 && Math.random() < 0.3) {
+      await hablar(lo_que_dijo.replace(/^\[[^\]]*\] /, ''), 'risa', { pitch:2, rate:1.15, sinBips:true });
       ponerEmocion('pensando', 30000);
     }
     try {
@@ -1564,6 +1709,22 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   $('palabra').value = cfg.palabra || 'Emo';
   $('palabra').addEventListener('input', e => { cfg.palabra = e.target.value.trim() || 'Emo'; guardar(); });
   if (cfg.despertar) setTimeout(esperarNombre, 2500);
+  $('vocesOn').checked = !!cfg.vocesOn;
+  $('vocesOn').addEventListener('change', e => { cfg.vocesOn = e.target.checked; guardar(); if (!cfg.vocesOn) apagarOido(); else prenderOido(); });
+  pintarVoces();
+  $('agregarVoz').addEventListener('click', () => { cfg.voces.push({ nombre:'Otra persona', tipo:'grande' }); guardar(); pintarVoces(); });
+  $('probarQuien').addEventListener('click', async () => {
+    const est = $('estadoVoces');
+    if (!hayVocesGrabadas()) { est.textContent = 'Primero grabá alguna voz con 🎙.'; return; }
+    if (!(await prenderOido(true))) { est.textContent = 'No pude usar el micrófono.'; return; }
+    pararEspera(); est.textContent = '🎙 Hablá 4 segundos…'; oido.grab = [];
+    await new Promise(r => setTimeout(r, 4000));
+    const fr = oido.grab; oido.grab = null; timerEspera = setTimeout(esperarNombre, 800);
+    if (fr.length < 8) { est.textContent = 'No se escuchó bien, probá de nuevo.'; return; }
+    const r = resumir(fr);
+    const ord = cfg.voces.filter(v => v.f0).map(v => ({ v, d:distanciaVoz(r, v) })).sort((a, b) => a.d - b.d);
+    est.textContent = (ord[0].d < 0.9 ? `Sos ${ord[0].v.nombre} 🙂` : `No estoy seguro… ¿${ord[0].v.nombre}?`) + `  (tono ${Math.round(r.f0)} Hz · ` + ord.map(o => `${o.v.nombre} ${o.d.toFixed(2)}`).join(', ') + ')';
+  });
   $('repetir').checked = !!cfg.repetir;
   $('repetir').addEventListener('change', e => { cfg.repetir = e.target.checked; guardar(); });
   $('loroTono').value = cfg.loroTono;
@@ -1679,7 +1840,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '33';
+  const VERSION = '34';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
