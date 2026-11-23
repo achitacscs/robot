@@ -214,6 +214,8 @@
   };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem('robot_cfg') || '{}')); } catch (e) {}
   const guardar = () => { try { localStorage.setItem('robot_cfg', JSON.stringify(cfg)); } catch (e) {} };
+  // escuchar siempre la palabra "Emo" (activado de fábrica desde la versión 33)
+  if (!cfg.despertarVer) { cfg.despertar = true; cfg.despertarVer = 1; guardar(); }
   // Link de configuración: .../robot/#clave=XXXX guarda la clave en este celular y la borra de la dirección.
   // (lo que va después de # no viaja a ningún servidor ni queda en el código publicado)
   (() => {
@@ -867,6 +869,7 @@
     const tol = objetivo.length <= 4 ? 1 : 2;
     for (let i = 0; i < pal.length; i++) {
       const w = pal[i].replace(/^h/, '');
+      if (objetivo === 'emo' && /^(emo|emmo|elmo|emos|nemo|memo|demo|emu|eno|ermo|imo|emu|hemo|emoo)$/.test(w)) return pal.slice(i + 1).join(' ');
       if (distancia(w, objetivo) <= tol && Math.abs(w.length - objetivo.length) <= 1) return pal.slice(i + 1).join(' ');
     }
     return null;
@@ -1289,7 +1292,8 @@ Reglas de cuidado (muy importantes):
 - Si cuenta que se lastimó, que alguien la trató mal o que está muy triste o asustada, consolala en una frase y decile que vaya ya a contarle a un grande de la casa.
 - Nunca le pidas datos (dirección, apellido, teléfono, escuela), fotos, ni que guarde secretos. Nunca le digas que no les cuente algo a sus papás.
 - No digas que sos una persona ni que estás vivo de verdad: sos un robot de juguete, aunque podés ser su amigo de juegos.
-- Si no sabés algo, decí que no sabés; no inventes.
+- Si te preguntan una cuenta o algo de saber general (aunque sea difícil o te lo pregunte un grande), contestá bien, con el resultado correcto, de forma simple. Si en el mensaje viene un "[Resultado calculado: ...]", ese resultado es correcto: usalo.
+- Si de verdad no sabés algo, decí que no sabés; no inventes.
 
 ${(cfg.ensenanzas || '').trim() ? `Cosas buenas que los papás te pidieron que le enseñes (sacalas de vez en cuando en la charla, no en cada respuesta; siempre de forma divertida y cariñosa, como un juego, un desafío o una canción, nunca retándola; si la nena cuenta que lo hizo, festejalo mucho):
 ${cfg.ensenanzas.trim().split('\n').filter(l => l.trim()).map(l => '- ' + l.trim()).join('\n')}
@@ -1415,13 +1419,33 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
     return { emo, texto, cancion, youtube, tema };
   }
 
+  // Cuentas: "cuánto es 1039 más 44" -> la calcula el robot y se la pasa a la IA (los modelos chicos se equivocan)
+  function resolverCuenta(t) {
+    const NUM = { cero:0, uno:1, una:1, un:1, dos:2, tres:3, cuatro:4, cinco:5, seis:6, siete:7, ocho:8, nueve:9, diez:10 };
+    let x = ' ' + t.toLowerCase().replace(/(\d)[.\s](?=\d{3}\b)/g, '$1').replace(/,/g, '.') + ' ';
+    x = x.replace(/\b(cero|uno|una|un|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\b/g, m => NUM[m]);
+    x = x.replace(/\bm[aá]s\b|\+/g, ' + ').replace(/\bmenos\b|−/g, ' - ')
+         .replace(/\b(por|multiplicado por|veces)\b|×|\*|(?<=\d)\s*x\s*(?=\d)/g, ' * ')
+         .replace(/\b(dividido|dividido por|dividido en|entre)\b|÷|\//g, ' / ');
+    const m = /(-?\d+(?:\.\d+)?(?:\s*[-+*/]\s*-?\d+(?:\.\d+)?)+)/.exec(x);
+    if (!m) return null;
+    const expr = m[1].replace(/\s+/g, '');
+    if (!/[-+*/]/.test(expr.slice(1))) return null;
+    try {
+      const r = Function('"use strict";return (' + expr + ')')();
+      if (!isFinite(r)) return null;
+      const lindo = Math.round(r * 1000) / 1000;
+      return expr.replace(/\*/g, ' × ').replace(/\//g, ' ÷ ').replace(/([+-])/g, ' $1 ').replace(/\s+/g, ' ') + ' = ' + String(lindo).replace('.', ',');
+    } catch (e) { return null; }
+  }
   async function conversar(lo_que_dijo, dePapas = false) {
     lo_que_dijo = (lo_que_dijo || '').trim();
     if (!lo_que_dijo) { estado = 'libre'; return; }
     if (!dePapas && comando(lo_que_dijo)) { anotar('👧 ' + lo_que_dijo + '  (comando)'); return; }
     if (dePapas) lo_que_dijo = '[Mensaje de los papás] ' + lo_que_dijo;
+    const cuenta = resolverCuenta(lo_que_dijo);
     estado = 'pensando'; ponerEmocion('pensando', 30000);
-    historial.push({ role:'user', content:lo_que_dijo });
+    historial.push({ role:'user', content: cuenta ? lo_que_dijo + '  [Resultado calculado: ' + cuenta + ']' : lo_que_dijo });
     while (historial.length > MAX_MENSAJES) historial.splice(0, 2);
     anotar((dePapas ? '👨 ' : '👧 ') + lo_que_dijo.replace('[Mensaje de los papás] ', ''));
     let respuesta;
@@ -1655,7 +1679,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '32';
+  const VERSION = '33';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
