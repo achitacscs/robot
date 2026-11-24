@@ -889,17 +889,21 @@
     }
     return null;
   }
+  // En Android cada vez que arranca el reconocimiento suena un "tirín": si se corta enseguida
+  // (silencio o error), espera cada vez más antes de volver a escuchar, para no hacer ruido sin parar.
+  let esperaFallas = 0;
   function esperarNombre() {
     clearTimeout(timerEspera);
     if (!cfg.despertar || durmiendo === 'apagado') return;
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return;
     if (modoCharla || modoLoro || bailando || estado !== 'libre' || document.hidden || hablandoAnim) { timerEspera = setTimeout(esperarNombre, 1500); return; }
-    let llamado = false;
+    let llamado = false, oyo = false; const inicio = performance.now();
     prenderOido();
     recEspera = new SR();
     recEspera.lang = 'es-AR'; recEspera.continuous = true; recEspera.interimResults = true;
     recEspera.onresult = e => {
+      oyo = true;
       if (llamado) return;
       for (let i = e.resultIndex; i < e.results.length; i++) {
         if (durmiendo && e.results[i].isFinal && CMD.despertar.test(e.results[i][0].transcript)) { llamado = true; try { recEspera.abort(); } catch (_) {} despertarse(); return; }
@@ -922,7 +926,13 @@
       }
     };
     recEspera.onerror = e => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { cfg.despertar = false; $('despertar').checked = false; guardar(); mostrarError('Para escuchar siempre hace falta permiso de micrófono.'); } };
-    recEspera.onend = () => { recEspera = null; if (!llamado) timerEspera = setTimeout(esperarNombre, 250); else timerEspera = setTimeout(esperarNombre, 3000); };
+    recEspera.onend = () => {
+      recEspera = null;
+      if (llamado) { esperaFallas = 0; timerEspera = setTimeout(esperarNombre, 3000); return; }
+      const corto = performance.now() - inicio < 8000;
+      esperaFallas = (oyo || !corto) ? 0 : Math.min(esperaFallas + 1, 5);
+      timerEspera = setTimeout(esperarNombre, [300, 1000, 2000, 4000, 6000, 8000][esperaFallas]);
+    };
     try { recEspera.start(); } catch (e) { timerEspera = setTimeout(esperarNombre, 2000); }
   }
   function pararEspera() { clearTimeout(timerEspera); try { recEspera && recEspera.abort(); } catch (e) {} recEspera = null; }
@@ -941,7 +951,7 @@
     oido.prendiendo = (async () => {
       try {
         prepararAudio();
-        const stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:false, autoGainControl:false } });
+        const stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } });
         const ctx = audioCtx, sr = ctx.sampleRate;
         const fuente = ctx.createMediaStreamSource(stream);
         const an = ctx.createAnalyser(); an.fftSize = 2048; an.smoothingTimeConstant = 0;
@@ -1840,7 +1850,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '34';
+  const VERSION = '35';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
