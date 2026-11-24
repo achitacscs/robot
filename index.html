@@ -20,6 +20,8 @@
   #inicio small { color:#4a7d85; font-size:14px; }
   #engranaje { position:fixed; right:8px; bottom:8px; width:44px; height:44px; border-radius:50%;
     border:none; background:#ffffff10; color:#ffffff40; font-size:22px; z-index:4; }
+  #oreja { position:fixed; left:50%; bottom:80px; transform:translateX(-50%); font-size:18px; opacity:0; transition:opacity .3s; pointer-events:none; z-index:5; }
+  #oreja.on { opacity:.55; }
   #mic { position:fixed; left:50%; bottom:12px; transform:translateX(-50%); width:64px; height:64px;
     border-radius:50%; border:2px solid #3ff0ff55; background:#3ff0ff18; color:#3ff0ffcc; font-size:28px; z-index:3; }
   #mic.oculto, #loro.oculto { display:none; }
@@ -77,6 +79,7 @@
 <video id="camVideo" playsinline muted style="position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.01;pointer-events:none"></video>
 <div id="camLuz" style="position:fixed;top:8px;right:10px;width:10px;height:10px;border-radius:50%;background:#50ff96;box-shadow:0 0 8px #50ff96;display:none;z-index:4" title="Cámara encendida"></div>
 <button id="mic" aria-label="Hablar">🎤</button>
+<div id="oreja">👂</div>
 <button id="loro" aria-label="Modo loro">🦜</button>
 <button id="engranaje" aria-label="Ajustes">⚙</button>
 
@@ -891,13 +894,21 @@
   }
   // En Android cada vez que arranca el reconocimiento suena un "tirín": si se corta enseguida
   // (silencio o error), espera cada vez más antes de volver a escuchar, para no hacer ruido sin parar.
-  let esperaFallas = 0;
+  let esperaFallas = 0, esperaMotivo = '', esperaMotivoT = 0;
+  // diagnóstico: va al registro del engranaje, sin repetir lo mismo muchas veces seguidas
+  let diagUlt = '', diagN = 0;
+  function diag(t) { if (t === diagUlt) { if (++diagN % 10) return; t += ' (x' + diagN + ')'; } else { diagUlt = t; diagN = 1; } anotar(t); }
   function esperarNombre() {
     clearTimeout(timerEspera);
     if (!cfg.despertar || durmiendo === 'apagado') return;
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return;
-    if (modoCharla || modoLoro || bailando || estado !== 'libre' || document.hidden || hablandoAnim) { timerEspera = setTimeout(esperarNombre, 1500); return; }
+    if (modoCharla || modoLoro || bailando || estado !== 'libre' || document.hidden || hablandoAnim) {
+      const por = modoCharla ? 'charla' : modoLoro ? 'loro' : bailando ? 'música' : estado !== 'libre' ? 'estado ' + estado : document.hidden ? 'pantalla oculta' : 'hablando';
+      if (por !== esperaMotivo) { esperaMotivo = por; if (performance.now() - esperaMotivoT > 20000 && !['charla','música','hablando'].includes(por)) diag('👂 no escucho el nombre (' + por + ')'); esperaMotivoT = performance.now(); }
+      timerEspera = setTimeout(esperarNombre, 1500); return;
+    }
+    esperaMotivo = '';
     let llamado = false, oyo = false; const inicio = performance.now();
     prenderOido();
     recEspera = new SR();
@@ -905,6 +916,7 @@
     recEspera.onresult = e => {
       oyo = true;
       if (llamado) return;
+      { const u = e.results[e.results.length - 1]; if (u.isFinal) diag('👂 oí: "' + u[0].transcript + '"'); }
       for (let i = e.resultIndex; i < e.results.length; i++) {
         if (durmiendo && e.results[i].isFinal && CMD.despertar.test(e.results[i][0].transcript)) { llamado = true; try { recEspera.abort(); } catch (_) {} despertarse(); return; }
         const resto = buscarNombre(e.results[i][0].transcript);
@@ -925,17 +937,17 @@
         return;
       }
     };
-    recEspera.onerror = e => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { cfg.despertar = false; $('despertar').checked = false; guardar(); mostrarError('Para escuchar siempre hace falta permiso de micrófono.'); } };
+    recEspera.onerror = e => { if (e.error !== 'no-speech' && e.error !== 'aborted') diag('👂 error: ' + e.error); if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { cfg.despertar = false; $('despertar').checked = false; guardar(); mostrarError('Para escuchar siempre hace falta permiso de micrófono.'); } };
     recEspera.onend = () => {
-      recEspera = null;
+      recEspera = null; $('oreja').classList.remove('on');
       if (llamado) { esperaFallas = 0; timerEspera = setTimeout(esperarNombre, 3000); return; }
       const corto = performance.now() - inicio < 8000;
       esperaFallas = (oyo || !corto) ? 0 : Math.min(esperaFallas + 1, 5);
-      timerEspera = setTimeout(esperarNombre, [300, 1000, 2000, 4000, 6000, 8000][esperaFallas]);
+      timerEspera = setTimeout(esperarNombre, [300, 800, 1500, 2500, 4000, 5000][esperaFallas]);
     };
-    try { recEspera.start(); } catch (e) { timerEspera = setTimeout(esperarNombre, 2000); }
+    try { recEspera.start(); $('oreja').classList.add('on'); } catch (e) { diag('👂 no pudo arrancar: ' + e.message); timerEspera = setTimeout(esperarNombre, 2000); }
   }
-  function pararEspera() { clearTimeout(timerEspera); try { recEspera && recEspera.abort(); } catch (e) {} recEspera = null; }
+  function pararEspera() { clearTimeout(timerEspera); try { recEspera && recEspera.abort(); } catch (e) {} recEspera = null; const o = $('oreja'); o && o.classList.remove('on'); }
 
   // =====================================================================
   // RECONOCER QUIÉN HABLA: mide el tono y el "color" de la voz mientras escucha
@@ -1850,7 +1862,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '35';
+  const VERSION = '36';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
