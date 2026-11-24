@@ -117,7 +117,7 @@
   <label>Nombre de la nena (opcional) <input id="nomNena" type="text" placeholder="sin nombre"></label>
   <details id="vocesBox" style="margin-top:10px"><summary style="font-weight:bold">🗣 Reconocer quién habla</summary>
     <div class="nota">Cada uno graba su voz una vez (tocá 🎙 y decí una frase larga durante 5 segundos, con voz normal). Así el robot sabe si le habla la nena o un grande. Con 2 o 3 grabaciones por persona reconoce mejor. El audio no se guarda ni se manda: solo se guardan unos números del tono de voz.</div>
-    <label><input id="vocesOn" type="checkbox"> Reconocer quién habla</label>
+    <label><input id="vocesOn" type="checkbox"> Reconocer quién habla (en algunos celulares no anda: si el robot deja de entender, apagalo)</label>
     <div id="listaVoces"></div>
     <div class="fila"><button id="agregarVoz">➕ Agregar persona</button><button id="probarQuien">🔎 ¿Quién soy?</button></div>
     <div id="estadoVoces" class="nota"></div>
@@ -220,13 +220,15 @@
   };
   const cfg = {
     prov:'gemini', claves:{}, modelos:{}, nomRobot:'', nomNena:'',
-    tono:1.4, velocidad:1.0, orientacion:'vertical', ventanaOn:false, ventanaGuia:false, ventana:{ arriba:0.03, abajo:0.35, izq:0.03, der:0.03 }, fuerza:4.5, movOn:true, verMic:true, sens:1.6, repetir:true, loroTono:1.5, ensenanzas:'', camara:false, canal:'', remoto:true, despertar:false, palabra:'Emo', voces:null, vocesOn:true, youtube:false, ytClave:'',
+    tono:1.4, velocidad:1.0, orientacion:'vertical', ventanaOn:false, ventanaGuia:false, ventana:{ arriba:0.03, abajo:0.35, izq:0.03, der:0.03 }, fuerza:4.5, movOn:true, verMic:true, sens:1.6, repetir:true, loroTono:1.5, ensenanzas:'', camara:false, canal:'', remoto:true, despertar:false, palabra:'Emo', voces:null, vocesOn:false, youtube:false, ytClave:'',
   };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem('robot_cfg') || '{}')); } catch (e) {}
   const guardar = () => { try { localStorage.setItem('robot_cfg', JSON.stringify(cfg)); } catch (e) {} };
   // escuchar siempre la palabra "Emo" (activado de fábrica desde la versión 33)
   if (!cfg.despertarVer) { cfg.despertar = true; cfg.despertarVer = 1; guardar(); }
   if (!cfg.nomNena) cfg.nomNena = 'Alma';
+  // v38: en algunos celulares medir la voz bloquea el reconocimiento: queda apagado salvo que lo prendan a mano
+  if (!cfg.vocesVer) { cfg.vocesOn = false; cfg.vocesVer = 1; guardar(); }
   if (!Array.isArray(cfg.voces)) { cfg.voces = [ { nombre:cfg.nomNena || 'Alma', tipo:'nena' }, { nombre:'Mamá', tipo:'grande' }, { nombre:'Papá', tipo:'grande' } ]; guardar(); }
   // Link de configuración: .../robot/#clave=XXXX guarda la clave en este celular y la borra de la dirección.
   // (lo que va después de # no viaja a ningún servidor ni queda en el código publicado)
@@ -856,6 +858,7 @@
     };
     reconocedor.onend = () => {
       nenaHablando = false;
+      revisarOido(inicioEsc, entendio);
       if (entendio) return;
       estado = 'libre';
       if (modoCharla && ++silencios < 2) { seguirCharla(); return; }
@@ -864,6 +867,7 @@
     };
     dedo = null; mirada.tx = 0; mirada.ty = 0;
     estado = 'escuchando'; ponerEmocion('escuchando', 15000);
+    const inicioEsc = performance.now();
     prenderOido();
     try { reconocedor.start(); } catch (err) { estado = 'libre'; ponerEmocion('normal'); }
   }
@@ -940,6 +944,7 @@
     recEspera.onerror = e => { if (e.error !== 'no-speech' && e.error !== 'aborted') diag('👂 error: ' + e.error); if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { cfg.despertar = false; $('despertar').checked = false; guardar(); mostrarError('Para escuchar siempre hace falta permiso de micrófono.'); } };
     recEspera.onend = () => {
       recEspera = null; $('oreja').classList.remove('on');
+      revisarOido(inicio, oyo);
       if (llamado) { esperaFallas = 0; timerEspera = setTimeout(esperarNombre, 3000); return; }
       const corto = performance.now() - inicio < 8000;
       esperaFallas = (oyo || !corto) ? 0 : Math.min(esperaFallas + 1, 5);
@@ -996,6 +1001,20 @@
       finally { oido.prendiendo = null; }
     })();
     return oido.prendiendo;
+  }
+  // Si alguien habló (el oído midió voz) pero el reconocimiento no entendió nada, dos veces seguidas,
+  // es que este celular no deja usar el micrófono para las dos cosas: apagamos "reconocer quién habla".
+  let oidoFallas = 0;
+  function revisarOido(desde, entendio) {
+    if (!oido.stream) return;
+    if (entendio) { oidoFallas = 0; return; }
+    const voz = oido.frames.filter(f => f.t > desde).length;
+    if (voz < 8) return;
+    if (++oidoFallas >= 2) {
+      oidoFallas = 0; apagarOido(); cfg.vocesOn = false; guardar(); $('vocesOn').checked = false;
+      mostrarError('En este celular, "Reconocer quién habla" no deja que el robot entienda lo que le dicen. Lo apagué.');
+      anotar('⚠ reconocer voces apagado: bloqueaba el micrófono');
+    }
   }
   function apagarOido() {
     if (!oido.stream) return;
@@ -1864,7 +1883,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '37';
+  const VERSION = '38';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
