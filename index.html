@@ -1061,10 +1061,12 @@
     const cont = $('listaVoces'); cont.innerHTML = '';
     cfg.voces.forEach((v, i) => {
       const f = document.createElement('div'); f.className = 'fila'; f.style.marginTop = '6px';
-      f.innerHTML = `<input type="text" style="flex:1;min-width:0" value=""><select><option value="nena">nena</option><option value="grande">grande</option></select><button title="Grabar">🎙</button><button title="Borrar">🗑</button>`;
+      f.style.flexWrap = 'wrap';
+      f.innerHTML = `<input type="text" placeholder="Nombre" style="flex:1 1 100%;width:100%"><select style="width:auto;flex:1"><option value="nena">nena</option><option value="grande">grande</option></select><button title="Grabar" style="flex:1">🎙 Grabar</button><button title="Borrar">🗑</button>`;
       const [inp, sel, bG, bB] = f.children;
       inp.value = v.nombre; sel.value = v.tipo;
       inp.addEventListener('input', () => { v.nombre = inp.value.trim() || 'Sin nombre'; guardar(); });
+      inp.addEventListener('focus', () => { if (/^(Otra persona|Sin nombre)$/.test(inp.value)) inp.select(); });
       sel.addEventListener('change', () => { v.tipo = sel.value; guardar(); });
       bG.addEventListener('click', () => grabarVoz(i));
       bB.addEventListener('click', () => { if (v.f0) { delete v.f0; delete v.b; v.n = 0; } else cfg.voces.splice(i, 1); guardar(); pintarVoces(); });
@@ -1862,7 +1864,7 @@ Ejemplo: [risa] ¡Qué gracioso! ¿Y tu perrito también ladra fuerte?`;
   // =====================================================================
   // ACTUALIZACIONES
   // =====================================================================
-  const VERSION = '36';
+  const VERSION = '37';
   $('version').textContent = 'Versión ' + VERSION;
   try {
     navigator.permissions.query({ name:'microphone' }).then(p => {
